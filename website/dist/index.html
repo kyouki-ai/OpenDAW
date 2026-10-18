@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1c1c19">
+  <meta name="description" content="OpenDAW — музыкальная рабочая станция для Windows. Создавай ритмы, рисуй мелодии и собирай собственные треки.">
+  <title>OpenDAW — начни с одного шага</title>
+  <link rel="canonical" href="https://kyouki-ai.github.io/OpenDAW/">
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">К содержимому</a>
+  <header class="masthead wrap">
+    <a class="brand" href="#" aria-label="OpenDAW — в начало">
+      <svg viewBox="0 0 64 44" aria-hidden="true"><path d="M2 25C9 25 7 12 13 12S17 38 23 38S26 2 32 2S35 40 41 40S45 15 51 15S54 25 62 25"/></svg>
+      <span>OpenDAW</span>
+    </a>
+    <nav aria-label="Главное меню"><a href="#studio">Приложение</a><a href="#process">Как это работает</a></nav>
+    <a class="repo-link" href="https://github.com/kyouki-ai/OpenDAW" target="_blank" rel="noopener noreferrer">Проект на GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="eyebrow"><span class="status-dot"></span> Музыкальная мастерская <span class="edition">Windows / ранняя версия</span></div>
+      <div class="hero-heading">
+        <h1 id="hero-title">Начни<br>с одного <em>шага.</em></h1>
+        <div class="hero-aside"><span class="tiny">СНАЧАЛА — ИДЕЯ</span><p>Ритм, который крутится в голове.<br>Мелодия, которую хочется сохранить.<br>Дай им место.</p><a class="text-link" href="#instrument">Попробовать ритм <span aria-hidden="true">↙</span></a></div>
+      </div>
+
+      <div class="instrument reveal" id="instrument" aria-labelledby="instrument-title">
+        <div class="instrument-top">
+          <div class="demo-heading"><span class="tiny">01 / ТВОЙ ПЕРВЫЙ ЛУП</span><h2 id="instrument-title">Четыре доли. Сколько угодно идей.</h2></div>
+          <div class="transport">
+            <label class="tempo-label" for="tempo"><span>BPM</span><output id="bpm" for="tempo">124</output></label>
+            <input id="tempo" type="range" min="80" max="160" value="124" aria-label="Темп демонстрации">
+            <button class="play" id="play" type="button" aria-label="Включить ритм" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5L20 12L9 19Z"/></svg></button>
+          </div>
+        </div>
+        <div class="sequence-scroll" tabindex="0" role="region" aria-label="Сетка из 16 шагов. На узком экране прокручивается вправо.">
+          <div class="sequence" id="sequence"></div>
+        </div>
+        <div class="instrument-bottom"><span id="demo-status" role="status">Нажми Play. Меняй шаги. Ритм — твой.</span><button class="reset" id="reset" type="button">Начать заново <span aria-hidden="true">↺</span></button></div>
+      </div>
+      <div class="hero-foot"><span>Интерактивный веб-секвенсор · звук только по нажатию</span><a href="#studio" aria-label="Перейти к приложению">Дальше — целый трек <span aria-hidden="true">↓</span></a></div>
+    </section>
+
+    <section class="studio paper" id="studio" aria-labelledby="studio-title">
+      <div class="wrap">
+        <div class="section-head reveal"><span class="tiny">02 / РАБОЧЕЕ ПРОСТРАНСТВО</span><div><h2 id="studio-title">Одна сессия.<br><em>Весь трек.</em></h2><p>От первых ударных до последнего аккорда —<br>сохраняй внимание на музыке.</p></div></div>
+        <div class="studio-toolbar"><div class="tabs" role="tablist" aria-label="Редакторы OpenDAW"><button id="tab-steps" role="tab" aria-selected="true" aria-controls="studio-panel" tabindex="0" data-view="steps">01 <span>Ритм</span></button><button id="tab-piano" role="tab" aria-selected="false" aria-controls="studio-panel" tabindex="-1" data-view="piano">02 <span>Ноты</span></button><button id="tab-mixer" role="tab" aria-selected="false" aria-controls="studio-panel" tabindex="-1" data-view="mixer">03 <span>Звук</span></button></div><span class="capture-label">НАСТОЯЩИЙ ИНТЕРФЕЙС ПРИЛОЖЕНИЯ</span></div>
+        <figure class="studio-frame reveal" id="studio-panel" role="tabpanel" aria-labelledby="tab-steps"><img id="studio-image" src="assets/studio-steps.png" width="1280" height="800" alt="OpenDAW: аранжировка и шаговый секвенсор с пятью инструментами" loading="lazy" decoding="async"><figcaption><span class="caption-number" id="caption-number">01</span><span id="studio-caption">Поставь ударные в сетке. Измени акценты. Собери свою основу.</span><span class="caption-spec">OpenDAW / Ember</span></figcaption></figure>
+      </div>
+    </section>
+
+    <section class="process wrap" id="process" aria-labelledby="process-title">
+      <div class="process-title reveal"><span class="tiny">03 / ОТ ИДЕИ К КОМПОЗИЦИИ</span><h2 id="process-title">Не теряй<br><em>свою мысль.</em></h2><p>Три привычных действия.<br>Одна непрерывная работа.</p></div>
+      <div class="process-rows">
+        <article class="process-row reveal"><span class="row-number">01</span><div><h3>Поймай пульс.</h3><p>Ударные и бас уже под рукой. Включай шаги, меняй силу удара и слушай, как появляется характер.</p></div><div class="rhythm-art" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
+        <article class="process-row reveal"><span class="row-number">02</span><div><h3>Дай ему мелодию.</h3><p>Нарисуй ноты и аккорды в piano roll. Двигай, удлиняй, дублируй. Ошибку всегда можно отменить.</p></div><div class="notes-art" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></article>
+        <article class="process-row reveal"><span class="row-number">03</span><div><h3>Собери целое.</h3><p>Разложи паттерны по дорожкам, настрой баланс в микшере. Сохрани сессию или экспортируй её в WAV.</p></div><div class="arrangement-art" aria-hidden="true"><i></i><i></i><i></i><i></i></div></article>
+      </div>
+      <div class="listen reveal"><div><span class="tiny">УЖЕ ЗВУЧИТ</span><h3>After hours</h3><p>Ударные, бас и четыре аккорда.<br>Настоящий экспорт из OpenDAW, 8,5 секунды.</p></div><button class="listen-button" id="listen" type="button" aria-pressed="false"><span class="listen-icon" aria-hidden="true">▷</span><span id="listen-label">Послушать проект</span></button><audio id="native-demo" src="assets/after-hours.wav" preload="none"></audio><div class="audio-line" aria-hidden="true"><span id="audio-progress"></span></div></div>
+    </section>
+
+    <section class="source" id="source" aria-labelledby="source-title"><div class="wrap source-inner"><span class="tiny">04 / ПРОДОЛЖЕНИЕ — ЗА ТОБОЙ</span><h2 id="source-title">Свои идеи.<br>Свои <em>треки.</em></h2><div class="source-bottom"><p>OpenDAW — бесплатная музыкальная рабочая станция для Windows.<br>Проект развивается: исходный код и история изменений доступны на GitHub.</p><a class="source-cta" href="https://github.com/kyouki-ai/OpenDAW" target="_blank" rel="noopener noreferrer">Открыть OpenDAW <span aria-hidden="true">↗</span></a></div><div class="availability"><span class="status-dot"></span> Ранняя версия · пока доступна сборка из исходников. Запись аудио и VST3 — в планах.</div></div></section>
+  </main>
+
+  <footer class="wrap footer"><a class="brand" href="#" aria-label="OpenDAW — в начало"><img src="assets/mark.svg" width="42" height="32" alt=""><span>OpenDAW</span></a><span>Сделай что-нибудь своё.</span><a href="https://github.com/kyouki-ai" target="_blank" rel="noopener noreferrer">kyouki-ai <span aria-hidden="true">↗</span></a></footer>
+  <noscript><p class="no-script wrap">Для интерактивного секвенсора нужен JavaScript. Описание и снимки приложения доступны без него.</p></noscript>
+</body>
+</html>
