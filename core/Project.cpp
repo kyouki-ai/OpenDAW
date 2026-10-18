@@ -77,7 +77,9 @@ std::string validateProject(const Project &p)
         if (!insert(track.id) || track.name.size() > 256 || track.clips.size() > 256 ||
             !std::isfinite(track.gain) || track.gain < 0 || track.gain > 1 || !std::isfinite(track.pan) ||
             track.pan < -1 || track.pan > 1 || static_cast<int>(track.instrument) < 0 ||
-            static_cast<int>(track.instrument) > 4)
+            static_cast<int>(track.instrument) > 4 || !std::isfinite(track.effectGain) ||
+            track.effectGain < 0 || track.effectGain > 2 || !std::isfinite(track.filterCutoff) ||
+            track.filterCutoff < 20 || track.filterCutoff > 20000)
             return "Invalid track or duplicate UUID";
         for (const auto &clip : track.clips)
             if (!insert(clip.id) || !patterns.contains(clip.patternId.value) || clip.start < 0 ||
@@ -91,19 +93,28 @@ Project makeDemoProject()
     Project p;
     p.id = newId();
     p.name = "After hours";
-    const std::array<const char *, 4> names{"Kick", "Snare", "Closed hat", "Sub bass"};
-    const std::array<Track::Instrument, 4> types{Track::Instrument::kick, Track::Instrument::snare,
-                                                 Track::Instrument::hat, Track::Instrument::triangle};
+    const std::array<const char *, 5> names{"Kick", "Snare", "Closed hat", "Sub bass", "Velvet keys"};
+    const std::array<Track::Instrument, 5> types{Track::Instrument::kick, Track::Instrument::snare,
+                                                 Track::Instrument::hat, Track::Instrument::triangle,
+                                                 Track::Instrument::sine};
     for (std::size_t channel = 0; channel < names.size(); ++channel)
     {
         Pattern pattern{newId(), names[channel]};
+        if (channel == 4)
+        {
+            pattern.length = ppq * 8;
+            constexpr int chords[4][3]{{57, 60, 64}, {53, 57, 60}, {60, 64, 67}, {55, 59, 62}};
+            for (int chord = 0; chord < 4; ++chord)
+                for (int pitch : chords[chord])
+                    pattern.notes.push_back({newId(), chord * ppq * 2, ppq * 2 - ppq / 8, pitch, 0.55f});
+        }
         for (int step = 0; step < 16; ++step)
         {
             bool active = channel == 0   ? step % 4 == 0
                           : channel == 1 ? step % 8 == 4
                           : channel == 2 ? step % 2 == 0
                                          : step == 0 || step == 6 || step == 10 || step == 14;
-            if (active)
+            if (active && channel < 4)
             {
                 const int pitch = channel == 3 ? (step < 8 ? 45 : step < 14 ? 48 : 43) : 60;
                 pattern.notes.push_back({newId(), step * ppq / 4, channel == 3 ? ppq / 2 : ppq / 8, pitch,
@@ -112,7 +123,7 @@ Project makeDemoProject()
         }
         Track track{newId(), names[channel]};
         track.instrument = types[channel];
-        track.gain = channel == 2 ? 0.6f : 0.75f;
+        track.gain = channel == 2 ? 0.6f : channel == 4 ? 0.5f : 0.75f;
         track.clips.push_back({newId(), pattern.id, 0, p.loopEnd});
         p.patterns.push_back(std::move(pattern));
         p.tracks.push_back(std::move(track));

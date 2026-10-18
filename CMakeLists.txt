@@ -60,7 +60,7 @@ if(OPENDAW_BUILD_APP)
         juce_add_gui_app(OpenDAW PRODUCT_NAME "OpenDAW" COMPANY_NAME "OpenDAW Project"
                          BUNDLE_ID "local.opendaw.desktop" VERSION "${PROJECT_VERSION}")
     endif()
-    target_sources(OpenDAW PRIVATE app/Main.cpp ui/MainComponent.cpp ui/Theme.cpp ui/StudioView.cpp audio/DeviceHost.cpp persistence/ProjectStore.cpp)
+    target_sources(OpenDAW PRIVATE app/Main.cpp ui/MainComponent.cpp ui/Theme.cpp ui/StudioView.cpp ui/MixerView.cpp audio/DeviceHost.cpp persistence/ProjectStore.cpp persistence/SessionStore.cpp)
     target_include_directories(OpenDAW PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(OpenDAW PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
                                JUCE_MODAL_LOOPS_PERMITTED=0 JUCE_ASIO=0)
@@ -73,5 +73,8 @@ if(OPENDAW_BUILD_APP)
         add_test(NAME gui_smoke COMMAND OpenDAW --smoke-test
             --screenshot "${CMAKE_BINARY_DIR}/screenshots/opendaw.png")
         set_tests_properties(gui_smoke PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
+        add_test(NAME demo_export COMMAND OpenDAW --render-demo "${CMAKE_BINARY_DIR}/demo.wav"
+            --report "${CMAKE_BINARY_DIR}/demo-export.txt")
+        set_tests_properties(demo_export PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
     endif()
 endif()

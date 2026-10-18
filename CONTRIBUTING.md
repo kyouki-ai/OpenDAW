@@ -26,6 +26,8 @@ GUI smoke проверяет редактирование, транспорт, �
 Необязательная проверка устройства: `OpenDAW.exe --device-smoke --report <absolute-report-path>`.
 Она открывает output без входов, подтверждает callback и тишину, затем закрывает приложение.
 Обычный CTest не открывает аудиоустройство.
+`demo_export` запускает `OpenDAW --render-demo <path> --report <path>` без устройства
+и сохраняет `build/windows/demo.wav` для прослушивания результата движка.
 
 ## Правила
 

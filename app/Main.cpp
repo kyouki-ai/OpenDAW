@@ -11,10 +11,56 @@ class OpenDAWApplication final : public juce::JUCEApplication
     {
         return "0.1.0";
     }
+    bool moreThanOneInstanceAllowed() override
+    {
+        const auto args = getCommandLineParameterArray();
+        return args.contains("--smoke-test") || args.contains("--device-smoke") ||
+               args.contains("--render-demo");
+    }
+    void anotherInstanceStarted(const juce::String &) override
+    {
+        if (window)
+            window->toFront(true);
+    }
     void initialise(const juce::String &) override
     {
         const auto args = getCommandLineParameterArray();
-        window = std::make_unique<Window>(args.contains("--smoke-test"));
+        const int demo = args.indexOf("--render-demo");
+        if (demo >= 0)
+        {
+            opendaw::WavResult result;
+            result.error = "Missing WAV destination";
+            if (demo + 1 < args.size())
+            {
+#if JUCE_WINDOWS
+                const std::filesystem::path path(std::wstring(args[demo + 1].toWideCharPointer()));
+#else
+                const auto path = std::filesystem::u8path(args[demo + 1].toStdString());
+#endif
+                try
+                {
+                    result = opendaw::exportWav(opendaw::makeDemoProject(), path);
+                }
+                catch (const std::exception &error)
+                {
+                    result.error = error.what();
+                }
+            }
+            const int report = args.indexOf("--report");
+            if (report >= 0 && report + 1 < args.size())
+            {
+                const juce::File file(args[report + 1]);
+                if (!file.replaceWithText(result.error.empty()
+                                              ? "PASS offline demo: " + juce::String(result.frames) +
+                                                    " frames; peak " + juce::String(result.peak, 6)
+                                              : "FAIL " + juce::String(result.error)))
+                    result.error = "Cannot write export report";
+            }
+            setApplicationReturnValue(result.error.empty() ? 0 : 2);
+            quit();
+            return;
+        }
+        window = std::make_unique<Window>(args.contains("--smoke-test"), !args.contains("--device-smoke"));
         if (args.contains("--device-smoke"))
         {
             juce::Timer::callAfterDelay(
@@ -67,6 +113,9 @@ class OpenDAWApplication final : public juce::JUCEApplication
                         passed = save(file);
                         content->showPianoRoll(true);
                         passed = save(file.getSiblingFile("opendaw-piano.png")) && passed;
+                        content->showMixer(true);
+                        passed = save(file.getSiblingFile("opendaw-mixer.png")) && passed;
+                        content->showMixer(false);
                         content->showPianoRoll(false);
                         content->setSize(960, 640);
                         passed = save(file.getSiblingFile("opendaw-compact.png")) && passed;
@@ -95,14 +144,14 @@ class OpenDAWApplication final : public juce::JUCEApplication
     class Window final : public juce::DocumentWindow
     {
       public:
-        explicit Window(bool smokeMode)
+        explicit Window(bool smokeMode, bool persistentSession)
             : DocumentWindow("OpenDAW", opendaw::ThemeTokens::ember().background, allButtons)
         {
             setUsingNativeTitleBar(true);
-            setContentOwned(new opendaw::MainComponent(smokeMode), true);
+            setContentOwned(new opendaw::MainComponent(smokeMode, persistentSession), true);
             setResizable(true, true);
             setResizeLimits(960, 640, 3840, 2160);
-            centreWithSize(1280, 800);
+            centreWithSize(getContentComponent()->getWidth(), getContentComponent()->getHeight());
             setVisible(true);
         }
         void closeButtonPressed() override

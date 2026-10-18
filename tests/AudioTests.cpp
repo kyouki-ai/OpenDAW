@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <new>
+#include <thread>
 #include <vector>
 #if defined(_MSC_VER)
 #include <crtdbg.h>
@@ -117,6 +118,11 @@ int runTests()
     check(!engine->meters.playing.load() && engine->meters.positionSamples.load() == 0, "stop resets clock");
     check(std::all_of(left.begin(), left.end(), [](float v) { return std::abs(v) < 1.0e-7f; }),
           "stop drains instrument tails");
+    engine->seek(ppq);
+    engine->process(outputs, 2, 1);
+    engine->stop();
+    engine->process(outputs, 2, 1);
+    check(engine->meters.positionSamples.load() == 0, "stop returns to start after seeking while stopped");
     auto a = render(*state, 64, 96000);
     auto b = render(*state, 257, 96000);
     check(a == b, "sample-exact render independent of callback block size");
@@ -175,6 +181,68 @@ int runTests()
     engine->process(outputs, 2, 1);
     check(engine->meters.positionSamples.load() == beforeTempo / 2 + 1,
           "tempo change preserves fractional musical position");
+    auto filteredProject = makeDemoProject();
+    filteredProject.tracks.resize(1);
+    filteredProject.patterns.resize(1);
+    filteredProject.tracks[0].instrument = Track::Instrument::sine;
+    filteredProject.patterns[0].notes = {{newId(), 0, ppq * 4, 96, 1}};
+    check(compileProject(filteredProject, *state).empty(), "filter reference compiled");
+    const auto dry = render(*state, 128, 16384);
+    filteredProject.tracks[0].filterEnabled = true;
+    filteredProject.tracks[0].filterCutoff = 250;
+    check(compileProject(filteredProject, *state).empty(), "low-pass state compiled");
+    const auto wet = render(*state, 257, 16384);
+    double dryEnergy = 0, wetEnergy = 0;
+    for (int i = 4096; i < 16384; ++i)
+    {
+        dryEnergy += dry[static_cast<std::size_t>(i)] * dry[static_cast<std::size_t>(i)];
+        wetEnergy += wet[static_cast<std::size_t>(i)] * wet[static_cast<std::size_t>(i)];
+    }
+    check(dryEnergy > 0 && wetEnergy < dryEnergy * 0.03, "low-pass attenuates high notes after settling");
+    check(render(*state, 64, 4096) == render(*state, 193, 4096),
+          "effect chain remains independent of callback size");
+    state->channels[0].filterCutoff = NAN;
+    check(!engine->publish(*state), "non-finite filter rejected before callback");
+    check(allocations == 0, "filter and mixer allocate no memory inside process");
+    SpscQueue<std::uint32_t, 8> queue;
+    constexpr std::uint32_t transfers = 10000;
+    std::jthread producer(
+        [&queue]
+        {
+            for (std::uint32_t i = 0; i < transfers; ++i)
+                while (!queue.push(i))
+                    std::this_thread::yield();
+        });
+    bool ordered = true;
+    for (std::uint32_t expected = 0; expected < transfers; ++expected)
+    {
+        std::uint32_t value = 0;
+        while (!queue.pop(value))
+            std::this_thread::yield();
+        ordered = ordered && value == expected;
+    }
+    producer.join();
+    check(ordered, "bounded SPSC preserves order across concurrent producer and consumer");
+    check(compileProject(project, *state).empty(), "prepare non-loop transport");
+    state->loopEnabled = false;
+    state->loopEnd = ppq;
+    state->songEnd = ppq;
+    engine = std::make_unique<AudioEngine>();
+    check(engine->publish(*state), "publish non-loop transport");
+    engine->play();
+    for (int i = 0; i < 60; ++i)
+        engine->process(outputs, 2, 512);
+    check(!engine->meters.playing.load(), "non-loop playback stops at region end");
+    engine->play();
+    engine->process(outputs, 2, 1);
+    check(engine->meters.positionSamples.load() == 1 && engine->meters.playing.load(),
+          "play restarts after reaching non-loop end");
+    auto shortLoop = project;
+    shortLoop.loopEnd = ppq;
+    shortLoop.loopEnabled = false;
+    check(compileProject(shortLoop, *state).empty() && state->songEnd == project.loopEnd &&
+              state->events[state->eventCount - 1].tick > shortLoop.loopEnd,
+          "disabling a short loop restores the entire arrangement schedule");
     const auto wav = std::filesystem::current_path() / ("opendaw-test-" + newId().value + ".wav");
     const auto exported = exportWav(project, wav, 48000, 24);
     if (!exported.error.empty())

@@ -26,10 +26,11 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     void showPianoRoll(bool show)
     {
         piano_ = show;
-        if (show && project_.tracks.size() > 3)
+        if (show && !project_.tracks.empty())
         {
-            selectedTrack_ = 3;
-            topPitch_ = 54;
+            currentPattern_ = {};
+            selectedTrack_ = static_cast<int>(project_.tracks.size()) - 1;
+            focusPattern();
         }
         repaint();
     }
@@ -48,6 +49,14 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     void toggleStep(int channel, int step);
     void duplicateNotes(bool fromClipboard = false);
     Pattern *patternForTrack(int track);
+    void focusPattern();
+    Tick pianoSpan() const;
+    Tick barLength() const;
+    Tick arrangementTotal() const;
+    Tick arrangementSpan() const;
+    Tick arrangementTick(float x) const;
+    void zoomPiano(int direction, float anchor);
+    void zoomArrangement(int direction, float anchor);
     Project &project_;
     AudioEngine &engine_;
     const ThemeTokens &theme_;
@@ -57,8 +66,11 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     bool resizeClip_ = false, gainDrag_ = false, loopDrag_ = false;
     Tick originalStart_ = 0, originalDuration_ = 0, dragTimeline_ = ppq * 32;
     int originalPitch_ = 60;
+    int pianoZoom_ = 1, arrangementZoom_ = 1;
+    Tick snap_ = ppq / 4, pianoStart_ = 0, arrangementStart_ = 0;
     juce::Point<float> dragOrigin_;
     std::vector<std::string> selectedNotes_;
     std::vector<Note> clipboard_;
+    EntityId currentPattern_;
 };
 } // namespace opendaw

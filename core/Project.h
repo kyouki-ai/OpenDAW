@@ -53,6 +53,9 @@ struct Track
     float pan = 0.0f;
     bool mute = false;
     bool solo = false;
+    float effectGain = 1.0f;
+    float filterCutoff = 20000.0f;
+    bool filterEnabled = false;
 };
 struct Project
 {

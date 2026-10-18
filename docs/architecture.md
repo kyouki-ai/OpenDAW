@@ -26,6 +26,8 @@ Callback владеет sample clock, курсором событий и 64 го
 отдельные atomics. Смена темпа сохраняет музыкальную позицию. Изменение gain/pan
 не пересоздаёт последовательность нот; изменение нот отпускает текущие голоса.
 Stop сбрасывает позицию и даёт хвостам затухнуть, loop возвращает курсор на начало региона.
+При выключенном loop воспроизводится весь arrangement, независимо от выбранного региона.
+Play после достижения конца снова начинает с начала композиции.
 Seek пока не восстанавливает уже начавшиеся длинные ноты.
 
 `DeviceHost` открывает только output через JUCE AudioDeviceManager. `prepare`
@@ -35,7 +37,8 @@ Seek пока не восстанавливает уже начавшиеся д
 ## Звук и экспорт
 
 Процедурные kick/snare/hat, sine/triangle synth, огибающие, constant-power pan,
-канальные gain/mute/solo, master smoothing и tanh soft limit. Семплы и сторонние
+канальные gain/mute/solo, input gain → one-pole low-pass → pan/volume → master.
+Gain/pan/filter сглаживаются за несколько миллисекунд; мастер защищён tanh soft limit. Семплы и сторонние
 инструменты не используются. Параметры огибающих пока фиксированы.
 
 `exportWav` создаёт отдельный экземпляр того же движка: весь arrangement,
@@ -52,13 +55,23 @@ Seek пока не восстанавливает уже начавшиеся д
 Сохранение: sibling temporary → flush → предыдущий файл в `.bak` → atomic replacement.
 На Windows используется MoveFileExW с REPLACE_EXISTING и WRITE_THROUGH.
 Проверены round-trip, backup, повреждённый JSON и отказ невалидной записи.
-Медиафайлы, миграции будущих версий и автоматическое recovery ещё не реализованы.
+Optional v1 поля filter/input gain читаются с безопасными defaults в старых проектах.
+Медиафайлы и миграции будущих основных версий ещё не реализованы.
+
+`SessionStore` хранит настройки темы, размера окна и output device XML в пользовательской
+папке OpenDAW. Каждые 30 секунд изменённый проект сохраняется в `recovery.opendaw`.
+После нештатного закрытия приложение предлагает Recover / Discard / Exit; повреждённая
+копия пробуется через `.bak`. Если обе не читаются, исходные файлы сохраняются, checkpoints
+приостанавливаются и UI сообщает ошибку. Обычное закрытие после Save/Discard очищает recovery.
+Один обычный экземпляр приложения предотвращает запись сессий друг поверх друга.
+Smoke-тесты используют собственные папки в build и не меняют пользовательские настройки.
 
 ## Проверки и границы
 
-CTest: core, audio_render, gui_smoke. В render-тесте проверяются musical clock,
+CTest: core, audio_render, gui_smoke, demo_export. В render-тесте проверяются musical clock,
 loop, voice continuity, mute/pan, нулевые operator-new вызовы внутри process,
-block-size independence, WAV заголовок/длина/PCM и сохранность destination при отмене.
+block-size independence, low-pass attenuation, SPSC producer/consumer ordering,
+WAV заголовок/длина/PCM и сохранность destination при отмене.
 GUI smoke проверяет операции модели через handlers, persistence и размеры 960×640/1280×800;
 он не заменяет реальные drag/drop, прослушивание или аппаратные DPI проверки.
 `--device-smoke` отдельно открывает output и проверяет тишину без воспроизведения.

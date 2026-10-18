@@ -12,7 +12,7 @@ class DeviceHost final : private juce::AudioIODeviceCallback
     {
         shutdown();
     }
-    juce::String start();
+    juce::String start(const juce::XmlElement *savedState = nullptr);
     void shutdown();
     [[nodiscard]] juce::String description() const;
     [[nodiscard]] bool available() const

@@ -21,6 +21,8 @@ struct RenderChannel
     Track::Instrument instrument = Track::Instrument::sine;
     float gain = 0.75f, pan = 0;
     bool mute = false, solo = false;
+    float effectGain = 1, filterCutoff = 20000;
+    bool filterEnabled = false;
 };
 struct RenderState
 {
@@ -30,6 +32,7 @@ struct RenderState
     std::uint64_t sequenceHash = 0;
     double bpm = 124;
     Tick loopStart = 0, loopEnd = ppq * 16;
+    Tick songEnd = ppq * 16;
     float masterGain = 0.8f;
     bool loopEnabled = true, metronome = false;
 };
@@ -40,6 +43,7 @@ struct EngineMeters
     static_assert(std::atomic<float>::is_always_lock_free && std::atomic<std::int64_t>::is_always_lock_free);
     std::atomic<std::int64_t> positionSamples{0}, positionTicks{0};
     std::atomic<float> masterPeak{0}, cpuLoad{0};
+    std::atomic<float> masterLeft{0}, masterRight{0};
     std::array<std::atomic<float>, maxChannels> channelPeak{};
     std::atomic<std::uint64_t> deadlineOverruns{0};
     std::atomic<std::uint64_t> callbackCount{0};
@@ -60,6 +64,7 @@ class AudioEngine
     void stop() noexcept
     {
         requestedPlaying_.store(false, std::memory_order_release);
+        requestedSeek_.store(0, std::memory_order_release);
     }
     void seek(Tick tick) noexcept
     {
@@ -90,6 +95,8 @@ class AudioEngine
     std::atomic<Tick> requestedSeek_{-1};
     std::array<Voice, maxVoices> voices_{};
     std::array<float, maxChannels> gainL_{}, gainR_{};
+    std::array<float, maxChannels> filterMemory_{}, filterAlpha_{}, effectGain_{};
+    float smoothing_ = 0.004f;
     std::size_t cursor_ = 0;
     int active_ = 0;
     double sampleRate_ = 48000, samplesPerTick_ = 0;

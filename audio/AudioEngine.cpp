@@ -15,6 +15,10 @@ std::string compileProject(const Project &project, RenderState &state)
     state.loopStart = project.loopStart;
     state.loopEnd = project.loopEnd;
     state.loopEnabled = project.loopEnabled;
+    state.songEnd = ppq * project.numerator * 4 / project.denominator;
+    for (const auto &track : project.tracks)
+        for (const auto &clip : track.clips)
+            state.songEnd = std::max(state.songEnd, clip.start + clip.length);
     state.metronome = project.metronome;
     state.masterGain = project.masterGain;
     state.channelCount = project.tracks.size();
@@ -23,20 +27,22 @@ std::string compileProject(const Project &project, RenderState &state)
     {
         const auto &track = project.tracks[c];
         state.channels[c] = {track.instrument, track.gain, track.pan, track.mute, track.solo};
+        state.channels[c].effectGain = track.effectGain;
+        state.channels[c].filterCutoff = track.filterCutoff;
+        state.channels[c].filterEnabled = track.filterEnabled;
         for (const auto &clip : track.clips)
         {
             const auto pattern = std::find_if(project.patterns.begin(), project.patterns.end(),
                                               [&clip](const auto &p) { return p.id == clip.patternId; });
             if (pattern->notes.empty())
                 continue;
-            for (Tick repeat = 0; repeat < clip.length && clip.start + repeat < project.loopEnd;
-                 repeat += pattern->length)
+            for (Tick repeat = 0; repeat < clip.length; repeat += pattern->length)
             {
                 for (const auto &note : pattern->notes)
                 {
                     const Tick start = clip.start + repeat + note.start;
                     const Tick end = std::min(start + note.duration, clip.start + clip.length);
-                    if (start >= clip.start + clip.length || start >= project.loopEnd || note.velocity == 0)
+                    if (start >= clip.start + clip.length || note.velocity == 0)
                         continue;
                     if (state.eventCount + 2 > maxEvents)
                         return "Arrangement exceeds 4096 scheduled notes";
@@ -93,6 +99,12 @@ void AudioEngine::prepare(double sampleRate) noexcept
         std::isfinite(sampleRate) && sampleRate >= 8000 && sampleRate <= 768000 ? sampleRate : 48000;
     samplesPerTick_ = sampleRate_ * 60.0 / (states_[active_].bpm * static_cast<double>(ppq));
     voices_.fill({});
+    gainL_.fill(0);
+    gainR_.fill(0);
+    filterMemory_.fill(0);
+    filterAlpha_.fill(1);
+    effectGain_.fill(1);
+    smoothing_ = static_cast<float>(1.0 - std::exp(-1.0 / (0.005 * sampleRate_)));
     position_ = toSamples(preserved);
     cursor_ = 0;
     resetCursor();
@@ -107,11 +119,16 @@ bool AudioEngine::publish(const RenderState &state) noexcept
 {
     if (state.channelCount > maxChannels || state.eventCount > maxEvents || !validTempo(state.bpm) ||
         state.loopStart < 0 || state.loopEnd <= state.loopStart || state.loopEnd > ppq * 4 * 4096 ||
-        !std::isfinite(state.masterGain) || state.masterGain < 0 || state.masterGain > 1)
+        state.songEnd <= 0 || state.songEnd > ppq * 4 * 4096 || !std::isfinite(state.masterGain) ||
+        state.masterGain < 0 || state.masterGain > 1)
         return false;
     for (const auto &channel : state.channels)
         if (!std::isfinite(channel.gain) || channel.gain < 0 || channel.gain > 1 ||
-            !std::isfinite(channel.pan) || channel.pan < -1 || channel.pan > 1)
+            !std::isfinite(channel.pan) || channel.pan < -1 || channel.pan > 1 ||
+            !std::isfinite(channel.effectGain) || channel.effectGain < 0 || channel.effectGain > 2 ||
+            !std::isfinite(channel.filterCutoff) || channel.filterCutoff < 20 ||
+            channel.filterCutoff > 20000 || static_cast<int>(channel.instrument) < 0 ||
+            static_cast<int>(channel.instrument) > 4)
             return false;
     for (std::size_t i = 0; i < state.eventCount; ++i)
         if (state.events[i].channel >= state.channelCount || state.events[i].pitch > 127 ||
@@ -240,9 +257,10 @@ void AudioEngine::process(float *const *outputs, int channels, int frames) noexc
         (void)retired;
     }
     const auto &state = states_[active_];
+    const Tick transportEnd = state.loopEnabled ? state.loopEnd : state.songEnd;
     if (const Tick seek = requestedSeek_.exchange(-1, std::memory_order_acq_rel); seek >= 0)
     {
-        position_ = toSamples(std::min(seek, state.loopEnd - 1));
+        position_ = toSamples(std::min(seek, transportEnd - 1));
         releaseAll();
         resetCursor();
     }
@@ -254,21 +272,35 @@ void AudioEngine::process(float *const *outputs, int channels, int frames) noexc
         cursor_ = 0;
         serial_ = 1;
     }
+    if (requested && !playing_ && position_ >= toSamples(transportEnd))
+    {
+        position_ = 0;
+        cursor_ = 0;
+        serial_ = 1;
+    }
     playing_ = requested;
     const bool solo = std::any_of(state.channels.begin(),
                                   state.channels.begin() + static_cast<std::ptrdiff_t>(state.channelCount),
                                   [](const auto &channel) { return channel.solo; });
+    std::array<float, maxChannels> targetL{}, targetR{}, targetAlpha{};
     for (std::size_t c = 0; c < maxChannels; ++c)
     {
         const auto &channel = state.channels[c];
         const float level =
             c >= state.channelCount || channel.mute || (solo && !channel.solo) ? 0.0f : channel.gain;
-        gainL_[c] = level * std::sqrt((1.0f - channel.pan) * 0.5f);
-        gainR_[c] = level * std::sqrt((1.0f + channel.pan) * 0.5f);
+        targetL[c] = level * std::sqrt((1.0f - channel.pan) * 0.5f);
+        targetR[c] = level * std::sqrt((1.0f + channel.pan) * 0.5f);
+        targetAlpha[c] = channel.filterEnabled
+                             ? static_cast<float>(
+                                   1.0 - std::exp(-2.0 * std::numbers::pi *
+                                                  std::min<double>(channel.filterCutoff, sampleRate_ * 0.45) /
+                                                  sampleRate_))
+                             : 1.0f;
     }
     std::array<float, maxChannels> peaks{};
     float peak = 0;
-    const auto endSample = toSamples(state.loopEnd), startSample = toSamples(state.loopStart);
+    float leftPeak = 0, rightPeak = 0;
+    const auto endSample = toSamples(transportEnd), startSample = toSamples(state.loopStart);
     for (int frame = 0; frame < frames; ++frame)
     {
         if (playing_ && position_ >= endSample)
@@ -307,15 +339,27 @@ void AudioEngine::process(float *const *outputs, int channels, int frames) noexc
             }
         }
         float left = 0, right = 0;
+        std::array<float, maxChannels> channelSamples{};
         for (auto &voice : voices_)
             if (voice.active)
             {
                 const float sample = renderVoice(voice);
                 const auto c = voice.channel;
-                left += sample * gainL_[c];
-                right += sample * gainR_[c];
-                peaks[c] = std::max(peaks[c], std::abs(sample) * std::max(gainL_[c], gainR_[c]));
+                channelSamples[c] += sample;
             }
+        for (std::size_t c = 0; c < state.channelCount; ++c)
+        {
+            gainL_[c] += (targetL[c] - gainL_[c]) * smoothing_;
+            gainR_[c] += (targetR[c] - gainR_[c]) * smoothing_;
+            filterAlpha_[c] += (targetAlpha[c] - filterAlpha_[c]) * smoothing_;
+            effectGain_[c] += (state.channels[c].effectGain - effectGain_[c]) * smoothing_;
+            filterMemory_[c] += (channelSamples[c] * effectGain_[c] - filterMemory_[c]) * filterAlpha_[c];
+            if (std::abs(filterMemory_[c]) < 1.0e-20f)
+                filterMemory_[c] = 0;
+            left += filterMemory_[c] * gainL_[c];
+            right += filterMemory_[c] * gainR_[c];
+            peaks[c] = std::max(peaks[c], std::abs(filterMemory_[c]) * std::max(gainL_[c], gainR_[c]));
+        }
         clickPhase_ += 1700.0 / sampleRate_;
         clickPhase_ -= std::floor(clickPhase_);
         const float click = click_ * static_cast<float>(std::sin(clickPhase_ * 2.0 * std::numbers::pi));
@@ -326,6 +370,8 @@ void AudioEngine::process(float *const *outputs, int channels, int frames) noexc
         left = std::tanh((left + click) * master_);
         right = std::tanh((right + click) * master_);
         peak = std::max({peak, std::abs(left), std::abs(right)});
+        leftPeak = std::max(leftPeak, std::abs(left));
+        rightPeak = std::max(rightPeak, std::abs(right));
         if (channels == 1)
         {
             if (outputs[0])
@@ -346,6 +392,8 @@ void AudioEngine::process(float *const *outputs, int channels, int frames) noexc
                                std::memory_order_relaxed);
     meters.playing.store(playing_, std::memory_order_relaxed);
     meters.masterPeak.store(std::max(peak, meters.masterPeak.load(std::memory_order_relaxed) * 0.86f));
+    meters.masterLeft.store(std::max(leftPeak, meters.masterLeft.load(std::memory_order_relaxed) * 0.86f));
+    meters.masterRight.store(std::max(rightPeak, meters.masterRight.load(std::memory_order_relaxed) * 0.86f));
     for (std::size_t c = 0; c < maxChannels; ++c)
         meters.channelPeak[c].store(
             std::max(peaks[c], meters.channelPeak[c].load(std::memory_order_relaxed) * 0.86f));

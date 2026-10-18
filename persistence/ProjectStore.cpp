@@ -124,6 +124,9 @@ juce::String projectJson(const Project &p)
         set(item, "pan", track.pan);
         set(item, "mute", track.mute);
         set(item, "solo", track.solo);
+        set(item, "effectGain", track.effectGain);
+        set(item, "filterCutoff", track.filterCutoff);
+        set(item, "filterEnabled", track.filterEnabled);
         juce::Array<juce::var> clips;
         for (const auto &clip : track.clips)
         {
@@ -211,6 +214,13 @@ juce::Result parseProjectJson(const juce::String &text, Project &output)
             track.pan = static_cast<float>(real(field(item, "pan")));
             track.mute = boolean(field(item, "mute"));
             track.solo = boolean(field(item, "solo"));
+            // Optional v1 fields keep older sessions compatible with a bypassed effect chain.
+            if (item.getDynamicObject()->hasProperty("effectGain"))
+                track.effectGain = static_cast<float>(real(field(item, "effectGain")));
+            if (item.getDynamicObject()->hasProperty("filterCutoff"))
+                track.filterCutoff = static_cast<float>(real(field(item, "filterCutoff")));
+            if (item.getDynamicObject()->hasProperty("filterEnabled"))
+                track.filterEnabled = boolean(field(item, "filterEnabled"));
             for (const auto &c : array(field(item, "clips"), 256))
                 track.clips.push_back({{string(field(c, "id"))},
                                        {string(field(c, "pattern"))},
@@ -234,12 +244,15 @@ juce::Result saveProject(const Project &project, const juce::File &target)
         return juce::Result::fail(error);
     if (!target.getParentDirectory().isDirectory())
         return juce::Result::fail("Project folder does not exist");
+    const auto json = projectJson(project);
+    if (json.getNumBytesAsUTF8() > 2 * 1024 * 1024)
+        return juce::Result::fail("Project exceeds 2 MiB");
     const juce::TemporaryFile temp(target);
     {
         auto stream = temp.getFile().createOutputStream();
         if (!stream)
             return juce::Result::fail("Cannot create temporary project file");
-        if (!stream->writeText(projectJson(project), false, false, "\n"))
+        if (!stream->writeText(json, false, false, "\n"))
             return juce::Result::fail("Project write failed");
         stream->flush();
         if (stream->getStatus().failed())
@@ -279,6 +292,9 @@ bool exerciseProjectStore(const juce::File &folder)
     original.name = "After hours - round trip";
     original.tracks[0].pan = -0.25f;
     original.tracks[1].solo = true;
+    original.tracks[2].filterEnabled = true;
+    original.tracks[2].filterCutoff = 2400;
+    original.tracks[2].effectGain = 1.25f;
     const auto file = folder.getChildFile("roundtrip.opendaw");
     Project loaded;
     if (saveProject(original, file).failed() || loadProject(file, loaded).failed() ||

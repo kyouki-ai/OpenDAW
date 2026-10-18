@@ -51,7 +51,7 @@ juce::Rectangle<int> StudioView::pianoGrid() const
 }
 juce::Rectangle<int> StudioView::stepCell(int channel, int step) const
 {
-    auto *pattern = const_cast<StudioView *>(this)->selectedPattern();
+    auto *pattern = const_cast<StudioView *>(this)->patternForTrack(channel);
     const int steps = pattern ? static_cast<int>(pattern->length / (ppq / 4)) : 16;
     const int width = getWidth() - 168;
     const int row = juce::jlimit(
@@ -70,6 +70,10 @@ Pattern *StudioView::patternForTrack(int index)
 {
     if (index < 0 || index >= static_cast<int>(project_.tracks.size()) || project_.patterns.empty())
         return nullptr;
+    if (index == selectedTrack_ && !currentPattern_.value.empty())
+        for (auto &pattern : project_.patterns)
+            if (pattern.id == currentPattern_)
+                return &pattern;
     auto &track = project_.tracks[static_cast<std::size_t>(index)];
     if (!track.clips.empty())
         for (auto &pattern : project_.patterns)
@@ -77,12 +81,77 @@ Pattern *StudioView::patternForTrack(int index)
                 return &pattern;
     return &project_.patterns[static_cast<std::size_t>(index) % project_.patterns.size()];
 }
+void StudioView::focusPattern()
+{
+    if (const auto *pattern = selectedPattern(); pattern && !pattern->notes.empty())
+    {
+        int low = 127, high = 0;
+        for (const auto &note : pattern->notes)
+        {
+            low = std::min(low, note.pitch);
+            high = std::max(high, note.pitch);
+        }
+        const int rows = juce::jlimit(12, 24, pianoGrid().getHeight() / 12);
+        topPitch_ = juce::jlimit(rows - 1, 127, high + std::max(0, rows - (high - low + 1)) / 2);
+    }
+}
 void StudioView::resetSelection()
 {
     selectedTrack_ = 0;
     selectedNotes_.clear();
+    currentPattern_ = {};
     dragNote_ = dragClip_ = clipTrack_ = -1;
+    gainDrag_ = loopDrag_ = velocityDrag_ = editStarted_ = false;
     topPitch_ = 66;
+    pianoStart_ = arrangementStart_ = 0;
+    pianoZoom_ = arrangementZoom_ = 1;
+}
+Tick StudioView::barLength() const
+{
+    return ppq * project_.numerator * 4 / project_.denominator;
+}
+Tick StudioView::pianoSpan() const
+{
+    const auto *pattern = const_cast<StudioView *>(this)->selectedPattern();
+    return pattern ? std::min(pattern->length, std::max<Tick>(snap_, pattern->length / pianoZoom_)) : ppq * 4;
+}
+Tick StudioView::arrangementTotal() const
+{
+    Tick end = std::max(barLength() * 8, project_.loopEnd);
+    for (const auto &track : project_.tracks)
+        for (const auto &clip : track.clips)
+            end = std::max(end, clip.start + clip.length);
+    return ((end + barLength() - 1) / barLength()) * barLength();
+}
+Tick StudioView::arrangementSpan() const
+{
+    return std::max(barLength(), arrangementTotal() / arrangementZoom_ / barLength() * barLength());
+}
+Tick StudioView::arrangementTick(float x) const
+{
+    return arrangementStart_ + static_cast<Tick>((x - 150) / (getWidth() - 158) * arrangementSpan());
+}
+void StudioView::zoomPiano(int direction, float anchor)
+{
+    const auto *pattern = selectedPattern();
+    if (!pattern)
+        return;
+    const double fraction =
+        juce::jlimit(0.0, 1.0, static_cast<double>(anchor - pianoGrid().getX()) / pianoGrid().getWidth());
+    const double tick = pianoStart_ + fraction * pianoSpan();
+    pianoZoom_ = juce::jlimit(1, 8, direction > 0 ? pianoZoom_ * 2 : pianoZoom_ / 2);
+    pianoStart_ = juce::jlimit<Tick>(0, std::max<Tick>(0, pattern->length - pianoSpan()),
+                                     static_cast<Tick>(tick - fraction * pianoSpan()));
+    repaint();
+}
+void StudioView::zoomArrangement(int direction, float anchor)
+{
+    const double fraction = juce::jlimit(0.0, 1.0, static_cast<double>(anchor - 150) / (getWidth() - 158));
+    const double tick = arrangementStart_ + fraction * arrangementSpan();
+    arrangementZoom_ = juce::jlimit(1, 8, direction > 0 ? arrangementZoom_ * 2 : arrangementZoom_ / 2);
+    arrangementStart_ = juce::jlimit<Tick>(0, arrangementTotal() - arrangementSpan(),
+                                           static_cast<Tick>(tick - fraction * arrangementSpan()));
+    repaint();
 }
 Tick StudioView::tickAt(float x) const
 {
@@ -90,10 +159,10 @@ Tick StudioView::tickAt(float x) const
     const auto grid = pianoGrid();
     if (!pattern)
         return 0;
-    const auto raw =
-        static_cast<double>(x - grid.getX()) / grid.getWidth() * static_cast<double>(pattern->length);
-    return juce::jlimit<Tick>(0, pattern->length - ppq / 4,
-                              static_cast<Tick>(std::floor(raw / (ppq / 4))) * (ppq / 4));
+    const auto raw = pianoStart_ + static_cast<double>(x - grid.getX()) / grid.getWidth() *
+                                       static_cast<double>(pianoSpan());
+    return juce::jlimit<Tick>(0, std::max<Tick>(0, pattern->length - snap_),
+                              static_cast<Tick>(std::floor(raw / snap_)) * snap_);
 }
 int StudioView::pitchAt(float y) const
 {
@@ -109,11 +178,11 @@ juce::Rectangle<float> StudioView::noteBounds(const Note &note) const
         return {};
     const int rows = juce::jlimit(12, 24, static_cast<int>(grid.getHeight()) / 12);
     return {
-        grid.getX() + static_cast<float>(note.start) / static_cast<float>(pattern->length) * grid.getWidth(),
+        grid.getX() +
+            static_cast<float>(note.start - pianoStart_) / static_cast<float>(pianoSpan()) * grid.getWidth(),
         grid.getY() + static_cast<float>(topPitch_ - note.pitch) * grid.getHeight() / rows + 1,
         std::max(3.0f,
-                 static_cast<float>(note.duration) / static_cast<float>(pattern->length) * grid.getWidth() -
-                     2),
+                 static_cast<float>(note.duration) / static_cast<float>(pianoSpan()) * grid.getWidth() - 2),
         grid.getHeight() / rows - 2};
 }
 int StudioView::noteAt(juce::Point<float> point) const
@@ -149,24 +218,31 @@ void StudioView::paint(juce::Graphics &g)
         g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 8, 1);
     }
     label(g, "Arrangement", {16, 5, 200, 26}, 16, t.text, true);
-    const Tick timeline = std::max(ppq * 32, project_.loopEnd);
+    const Tick timeline = arrangementSpan();
     const float timeWidth = static_cast<float>(getWidth() - 158);
-    const auto xAt = [timeWidth, timeline](Tick tick)
-    { return 150.0f + static_cast<float>(tick) / static_cast<float>(timeline) * timeWidth; };
+    const auto xAt = [this, timeWidth, timeline](Tick tick)
+    {
+        return 150.0f +
+               static_cast<float>(tick - arrangementStart_) / static_cast<float>(timeline) * timeWidth;
+    };
     const int rowHeight =
         project_.tracks.empty() ? 50 : (a.getHeight() - 40) / static_cast<int>(project_.tracks.size());
     const auto playTick = engine_.meters.positionTicks.load(std::memory_order_relaxed);
+    const auto loopLeft = std::max(150.0f, xAt(project_.loopStart));
+    const auto loopRight = std::min(static_cast<float>(getWidth() - 8), xAt(project_.loopEnd));
     g.setColour(t.accent.withAlpha(0.07f));
-    g.fillRect(xAt(project_.loopStart), 33.0f, xAt(project_.loopEnd) - xAt(project_.loopStart),
-               static_cast<float>(a.getHeight() - 36));
-    for (int bar = 0; bar <= 8; ++bar)
+    g.fillRect(loopLeft, 33.0f, std::max(0.0f, loopRight - loopLeft), static_cast<float>(a.getHeight() - 36));
+    const Tick major = std::max<Tick>(1, (timeline / barLength() + 7) / 8) * barLength();
+    for (Tick tick = (arrangementStart_ / major + 1) * major - major; tick <= arrangementStart_ + timeline;
+         tick += major)
     {
-        const float x = 150.0f + bar * timeWidth / 8.0f;
+        const float x = xAt(tick);
+        if (x < 150)
+            continue;
         g.setColour(t.border.withAlpha(0.5f));
         g.drawVerticalLine(static_cast<int>(x), 32, static_cast<float>(a.getBottom() - 4));
-        if (bar < 8)
-            label(g, juce::String(bar * static_cast<int>(timeline / (ppq * 32)) + 1),
-                  {static_cast<int>(x) + 6, 7, 28, 18}, 10, t.muted);
+        if (x < getWidth() - 35)
+            label(g, juce::String(tick / barLength() + 1), {static_cast<int>(x) + 6, 7, 28, 18}, 10, t.muted);
     }
     for (std::size_t c = 0; c < project_.tracks.size(); ++c)
     {
@@ -181,7 +257,7 @@ void StudioView::paint(juce::Graphics &g)
             g.fillRoundedRectangle(3.0f, static_cast<float>(y + 8), 2, static_cast<float>(rowHeight - 18), 1);
         }
         label(g, juce::String(track.name), {16, y + 3, 128, 22}, 13, t.text, true);
-        for (int button = 0; button < 2; ++button)
+        for (int button = 0; rowHeight >= 48 && button < 2; ++button)
         {
             const bool on = button == 0 ? track.mute : track.solo;
             g.setColour(on ? colour : t.raised);
@@ -189,13 +265,17 @@ void StudioView::paint(juce::Graphics &g)
             label(g, button == 0 ? "M" : "S", {24 + button * 27, y + 28, 16, 20}, 11,
                   on ? t.background : t.muted);
         }
-        const float meter = engine_.meters.channelPeak[c].load(std::memory_order_relaxed);
-        g.setColour(t.border);
-        g.fillRoundedRectangle(80, static_cast<float>(y + 34), 53, 4, 2);
-        g.setColour(colour);
-        g.fillRoundedRectangle(80, static_cast<float>(y + 34), juce::jlimit(0.0f, 53.0f, meter * 130), 4, 2);
-        g.setColour(t.muted);
-        g.fillEllipse(80 + track.gain * 50, static_cast<float>(y + 31), 8, 8);
+        if (rowHeight >= 48)
+        {
+            const float meter = engine_.meters.channelPeak[c].load(std::memory_order_relaxed);
+            g.setColour(t.border);
+            g.fillRoundedRectangle(80, static_cast<float>(y + 34), 53, 4, 2);
+            g.setColour(colour);
+            g.fillRoundedRectangle(80, static_cast<float>(y + 34), juce::jlimit(0.0f, 53.0f, meter * 130), 4,
+                                   2);
+            g.setColour(t.muted);
+            g.fillEllipse(80 + track.gain * 50, static_cast<float>(y + 31), 8, 8);
+        }
         for (const auto &clip : track.clips)
         {
             const auto box =
@@ -212,6 +292,7 @@ void StudioView::paint(juce::Graphics &g)
             g.drawRoundedRectangle(box, 4, 1);
             label(g, juce::String(track.name) + " / pattern", box.toNearestInt().reduced(8).withHeight(18),
                   10, colour);
+            g.reduceClipRegion(box.toNearestInt().reduced(2));
             for (const auto &pattern : project_.patterns)
                 if (pattern.id == clip.patternId)
                     for (Tick repeat = 0; repeat < clip.length; repeat += pattern.length)
@@ -220,16 +301,19 @@ void StudioView::paint(juce::Graphics &g)
                             if (repeat + note.start >= clip.length)
                                 continue;
                             const float nx = xAt(clip.start + repeat + note.start) + 3;
+                            const float pitchSpacing = juce::jlimit(0.0f, 1.5f, (box.getHeight() - 38) / 12);
                             const float ny =
-                                box.getBottom() - 12 - static_cast<float>(note.pitch % 12) * 1.5f;
+                                box.getBottom() - 7 - static_cast<float>(note.pitch % 12) * pitchSpacing;
                             g.setColour(colour.withAlpha(0.85f));
-                            g.fillRoundedRectangle(nx, ny, std::max(2.0f, xAt(note.duration) - 150 - 2), 2.5f,
-                                                   1);
+                            g.fillRoundedRectangle(
+                                nx, ny,
+                                std::max(2.0f, static_cast<float>(note.duration) / timeline * timeWidth - 2),
+                                2.5f, 1);
                         }
             g.restoreState();
         }
     }
-    if (playTick <= timeline)
+    if (playTick >= arrangementStart_ && playTick <= arrangementStart_ + timeline)
     {
         const float x = xAt(playTick);
         g.setColour(t.accent);
@@ -252,22 +336,30 @@ void StudioView::paint(juce::Graphics &g)
     auto *pattern = selectedPattern();
     if (!pattern)
         return;
-    label(g, juce::String(pattern->name), {300, e.getY() + 8, std::max(30, getWidth() - 435), 24}, 12,
-          t.muted);
+    if (getWidth() > 820)
+        label(g, juce::String(pattern->name), {300, e.getY() + 8, getWidth() - 580, 24}, 12, t.muted);
+    if (piano_)
+    {
+        label(g, "Grid 1/" + juce::String(ppq * 4 / snap_), {getWidth() - 270, e.getY() + 8, 80, 24}, 11,
+              t.muted);
+        label(g, "Zoom " + juce::String(pianoZoom_) + "x", {getWidth() - 180, e.getY() + 8, 75, 24}, 11,
+              t.muted);
+    }
     label(g, juce::String(pattern->length / (ppq / 4)) + " steps", {getWidth() - 100, e.getY() + 8, 90, 24},
           12, t.accent);
     if (!piano_)
     {
-        const int steps = static_cast<int>(pattern->length / (ppq / 4));
         for (std::size_t c = 0; c < project_.tracks.size(); ++c)
         {
             Pattern *p = patternForTrack(static_cast<int>(c));
             if (!p)
                 continue;
+            const int steps = static_cast<int>(p->length / (ppq / 4));
             const auto colour = trackColour(static_cast<int>(c), t);
             const auto labelBounds = stepCell(static_cast<int>(c), 0);
-            label(g, juce::String(project_.tracks[c].name),
-                  {16, labelBounds.getY(), 132, labelBounds.getHeight()}, 12, t.text);
+            label(g, juce::String(project_.tracks[c].name) + " / " + juce::String(steps),
+                  {16, labelBounds.getY(), 132, labelBounds.getHeight()}, 12,
+                  static_cast<int>(c) == selectedTrack_ ? t.accent : t.text);
             for (int step = 0; step < steps; ++step)
             {
                 const auto r = stepCell(static_cast<int>(c), step).toFloat();
@@ -312,11 +404,13 @@ void StudioView::paint(juce::Graphics &g)
             label(g, "C" + juce::String(pitch / 12 - 1), {12, y, 32, next - y}, 9,
                   black ? t.text : t.background);
     }
-    for (int step = 0; step <= pattern->length / (ppq / 4); ++step)
+    for (Tick tick = 0; tick <= pattern->length; tick += snap_)
     {
-        const int x = grid.getX() + static_cast<int>(static_cast<double>(step * ppq / 4) / pattern->length *
+        const int x = grid.getX() + static_cast<int>(static_cast<double>(tick - pianoStart_) / pianoSpan() *
                                                      grid.getWidth());
-        g.setColour(t.border.withAlpha(step % 4 == 0 ? 0.8f : 0.3f));
+        if (x < grid.getX() || x > grid.getRight())
+            continue;
+        g.setColour(t.border.withAlpha(tick % ppq == 0 ? 0.8f : 0.3f));
         g.drawVerticalLine(x, static_cast<float>(grid.getY()), static_cast<float>(grid.getBottom()));
     }
     g.saveState();
@@ -331,11 +425,22 @@ void StudioView::paint(juce::Graphics &g)
         g.drawVerticalLine(static_cast<int>(box.getRight() - 4), box.getY() + 2, box.getBottom() - 2);
     }
     g.restoreState();
+    const auto patternTick = playTick % pattern->length;
+    if (engine_.meters.playing.load() && patternTick >= pianoStart_ &&
+        patternTick < pianoStart_ + pianoSpan())
+    {
+        const auto x = grid.getX() + static_cast<int>(static_cast<double>(patternTick - pianoStart_) /
+                                                      pianoSpan() * grid.getWidth());
+        g.setColour(t.accent);
+        g.drawVerticalLine(x, static_cast<float>(grid.getY()), static_cast<float>(grid.getBottom()));
+    }
     const int velocityY = grid.getBottom() + 12, velocityH = std::max(10, e.getBottom() - velocityY - 22);
     label(g, "VEL", {10, velocityY, 40, 18}, 9, t.muted);
     for (const auto &note : pattern->notes)
     {
         const float x = noteBounds(note).getX() + 3;
+        if (x < grid.getX() || x > grid.getRight())
+            continue;
         g.setColour(selected(selectedNotes_, note) ? t.text : t.accent);
         g.drawLine(x, static_cast<float>(velocityY + velocityH), x,
                    static_cast<float>(velocityY) + (1 - note.velocity) * velocityH, 2);
@@ -370,7 +475,7 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
     gainDrag_ = loopDrag_ = velocityDrag_ = false;
     dragNote_ = dragClip_ = clipTrack_ = -1;
     dragOrigin_ = event.position;
-    dragTimeline_ = std::max(ppq * 32, project_.loopEnd);
+    dragTimeline_ = arrangementSpan();
     const auto a = arrangement(), e = editor();
     auto *pattern = selectedPattern();
     if (e.contains(event.getPosition()) && event.y < e.getY() + 40)
@@ -389,23 +494,41 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
             std::erase_if(pattern->notes, [pattern](const Note &n) { return n.start >= pattern->length; });
             for (auto &n : pattern->notes)
                 n.duration = std::min(n.duration, pattern->length - n.start);
+            pianoStart_ = std::min(pianoStart_, std::max<Tick>(0, pattern->length - pianoSpan()));
             changed();
+            return;
+        }
+        if (piano_ && event.x >= getWidth() - 270 && event.x < getWidth() - 190)
+        {
+            snap_ = snap_ == ppq / 4 ? ppq / 2 : snap_ == ppq / 2 ? ppq / 8 : ppq / 4;
+            repaint();
+            return;
+        }
+        if (piano_ && event.x >= getWidth() - 190)
+        {
+            if (pianoZoom_ == 8)
+            {
+                pianoZoom_ = 1;
+                pianoStart_ = 0;
+            }
+            else
+                zoomPiano(1, static_cast<float>(pianoGrid().getX()));
+            repaint();
             return;
         }
     }
     if (a.contains(event.getPosition()))
     {
         const Tick timeline = dragTimeline_;
-        const auto tick =
-            static_cast<Tick>(static_cast<double>(event.x - 150) / (getWidth() - 158) * timeline);
+        const auto tick = arrangementTick(event.position.x);
         if (event.y < 34 && event.x >= 150)
         {
             if (event.mods.isShiftDown())
             {
                 beginEdit();
                 loopDrag_ = true;
-                project_.loopStart = std::max<Tick>(0, tick / (ppq * 4) * (ppq * 4));
-                project_.loopEnd = std::max(project_.loopEnd, project_.loopStart + ppq * 4);
+                project_.loopStart = std::max<Tick>(0, tick / barLength() * barLength());
+                project_.loopEnd = std::max(project_.loopEnd, project_.loopStart + barLength());
                 changed();
             }
             else
@@ -416,8 +539,13 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
         const int channel = (event.y - 36) / rh;
         if (channel < 0 || channel >= static_cast<int>(project_.tracks.size()))
             return;
+        if (selectedTrack_ != channel)
+        {
+            pianoStart_ = 0;
+            currentPattern_ = {};
+        }
         selectedTrack_ = channel;
-        topPitch_ = channel == 3 ? 54 : 66;
+        focusPattern();
         selectedNotes_.clear();
         auto &track = project_.tracks[static_cast<std::size_t>(channel)];
         const int localY = event.y - 36 - channel * rh;
@@ -446,6 +574,10 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
             auto &clip = track.clips[i];
             if (tick >= clip.start && tick < clip.start + clip.length)
             {
+                currentPattern_ = clip.patternId;
+                pianoStart_ = 0;
+                focusPattern();
+                repaint();
                 if (event.mods.isRightButtonDown())
                 {
                     beginEdit();
@@ -476,9 +608,9 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
         if (pattern)
         {
             beginEdit();
-            const Tick start = std::max<Tick>(0, tick / (ppq * 4) * (ppq * 4));
-            track.clips.push_back({newId(), selectedPattern()->id, start, ppq * 4});
-            project_.loopEnd = std::max(project_.loopEnd, start + ppq * 4);
+            const Tick start = std::max<Tick>(0, tick / barLength() * barLength());
+            track.clips.push_back({newId(), selectedPattern()->id, start, barLength()});
+            project_.loopEnd = std::max(project_.loopEnd, start + barLength());
             changed();
         }
         return;
@@ -487,11 +619,16 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
         return;
     if (!piano_)
     {
-        const int steps = static_cast<int>(pattern->length / (ppq / 4));
         for (int channel = 0; channel < static_cast<int>(project_.tracks.size()); ++channel)
-            for (int step = 0; step < steps; ++step)
+            for (int step = 0; step < patternForTrack(channel)->length / (ppq / 4); ++step)
                 if (stepCell(channel, step).contains(event.getPosition()))
                 {
+                    if (selectedTrack_ != channel)
+                    {
+                        currentPattern_ = {};
+                        selectedNotes_.clear();
+                        pianoStart_ = 0;
+                    }
                     selectedTrack_ = channel;
                     toggleStep(channel, step);
                     return;
@@ -570,9 +707,9 @@ void StudioView::mouseDrag(const juce::MouseEvent &event)
     if (loopDrag_)
     {
         const Tick timeline = dragTimeline_;
-        const auto tick =
-            static_cast<Tick>(static_cast<double>(event.x - 150) / (getWidth() - 158) * timeline);
-        project_.loopEnd = std::max(project_.loopStart + ppq * 4, (tick / (ppq * 4) + 1) * (ppq * 4));
+        const auto tick = arrangementStart_ + static_cast<Tick>(static_cast<double>(event.x - 150) /
+                                                                (getWidth() - 158) * timeline);
+        project_.loopEnd = std::max(project_.loopStart + barLength(), (tick / barLength() + 1) * barLength());
         changed();
         return;
     }
@@ -584,10 +721,10 @@ void StudioView::mouseDrag(const juce::MouseEvent &event)
         const Tick timeline = dragTimeline_;
         const Tick delta =
             static_cast<Tick>(std::round((event.position.x - dragOrigin_.x) / (getWidth() - 158) *
-                                         static_cast<double>(timeline) / (ppq * 4))) *
-            ppq * 4;
+                                         static_cast<double>(timeline) / barLength())) *
+            barLength();
         if (resizeClip_)
-            clip.length = std::max(ppq * 4, originalDuration_ + delta);
+            clip.length = std::max(barLength(), originalDuration_ + delta);
         else
             clip.start = std::max<Tick>(0, originalStart_ + delta);
         project_.loopEnd = std::max(project_.loopEnd, clip.start + clip.length);
@@ -612,18 +749,24 @@ void StudioView::mouseDrag(const juce::MouseEvent &event)
     beginEdit();
     const auto grid = pianoGrid();
     const Tick delta = static_cast<Tick>(std::round((event.position.x - dragOrigin_.x) / grid.getWidth() *
-                                                    static_cast<double>(pattern->length) / (ppq / 4))) *
-                       (ppq / 4);
+                                                    static_cast<double>(pianoSpan()) / snap_)) *
+                       snap_;
     if (resizeNote_)
-        note.duration = juce::jlimit(std::min(ppq / 4, pattern->length - note.start),
+        note.duration = juce::jlimit(std::min(snap_, pattern->length - note.start),
                                      pattern->length - note.start, originalDuration_ + delta);
     else
     {
         const Tick nextStart = juce::jlimit<Tick>(0, pattern->length - note.duration, originalStart_ + delta);
         const int nextPitch =
             juce::jlimit(0, 127, originalPitch_ + pitchAt(event.position.y) - pitchAt(dragOrigin_.y));
-        const Tick move = nextStart - note.start;
-        const int pitchMove = nextPitch - note.pitch;
+        Tick move = nextStart - note.start;
+        int pitchMove = nextPitch - note.pitch;
+        for (const auto &item : pattern->notes)
+            if (selected(selectedNotes_, item))
+            {
+                move = juce::jlimit<Tick>(-item.start, pattern->length - item.duration - item.start, move);
+                pitchMove = juce::jlimit(-item.pitch, 127 - item.pitch, pitchMove);
+            }
         for (auto &item : pattern->notes)
             if (selected(selectedNotes_, item))
             {
@@ -633,8 +776,27 @@ void StudioView::mouseDrag(const juce::MouseEvent &event)
     }
     changed();
 }
-void StudioView::mouseUp(const juce::MouseEvent &)
+void StudioView::mouseUp(const juce::MouseEvent &event)
 {
+    if (dragClip_ >= 0 && clipTrack_ >= 0 && !resizeClip_ && editStarted_ &&
+        arrangement().contains(event.getPosition()) && event.x >= 150 && event.y >= 36)
+    {
+        const int row =
+            (arrangement().getHeight() - 40) / std::max(1, static_cast<int>(project_.tracks.size()));
+        const int target = (event.y - 36) / row;
+        if (target >= 0 && target < static_cast<int>(project_.tracks.size()) && target != clipTrack_)
+        {
+            auto &source = project_.tracks[static_cast<std::size_t>(clipTrack_)].clips;
+            auto &destination = project_.tracks[static_cast<std::size_t>(target)].clips;
+            if (dragClip_ < static_cast<int>(source.size()) && destination.size() < 256)
+            {
+                destination.push_back(source[static_cast<std::size_t>(dragClip_)]);
+                source.erase(source.begin() + dragClip_);
+                selectedTrack_ = target;
+                changed();
+            }
+        }
+    }
     dragNote_ = dragClip_ = clipTrack_ = -1;
     gainDrag_ = loopDrag_ = velocityDrag_ = editStarted_ = false;
 }
@@ -643,7 +805,30 @@ void StudioView::mouseWheelMove(const juce::MouseEvent &event, const juce::Mouse
     editStarted_ = false;
     if (piano_ && pianoGrid().contains(event.getPosition()))
     {
-        topPitch_ = juce::jlimit(24, 127, topPitch_ + (wheel.deltaY > 0 ? 2 : -2));
+        if (event.mods.isCtrlDown())
+            zoomPiano(wheel.deltaY > 0 ? 1 : -1, event.position.x);
+        else if (event.mods.isShiftDown() || std::abs(wheel.deltaX) > std::abs(wheel.deltaY))
+        {
+            const auto *pattern = selectedPattern();
+            if (pattern)
+                pianoStart_ = juce::jlimit<Tick>(0, std::max<Tick>(0, pattern->length - pianoSpan()),
+                                                 pianoStart_ + (wheel.deltaY + wheel.deltaX > 0 ? -1 : 1) *
+                                                                   std::max(snap_, pianoSpan() / 8));
+        }
+        else
+            topPitch_ = juce::jlimit(juce::jlimit(12, 24, pianoGrid().getHeight() / 12) - 1, 127,
+                                     topPitch_ + (wheel.deltaY > 0 ? 2 : -2));
+        repaint();
+        return;
+    }
+    if (arrangement().contains(event.getPosition()) && event.x >= 150)
+    {
+        if (event.mods.isCtrlDown())
+            zoomArrangement(wheel.deltaY > 0 ? 1 : -1, event.position.x);
+        else
+            arrangementStart_ = juce::jlimit<Tick>(
+                0, arrangementTotal() - arrangementSpan(),
+                arrangementStart_ + (wheel.deltaY + wheel.deltaX > 0 ? -1 : 1) * barLength());
         repaint();
         return;
     }
@@ -654,7 +839,7 @@ void StudioView::mouseWheelMove(const juce::MouseEvent &event, const juce::Mouse
         if (!current)
             return;
         for (int c = 0; c < static_cast<int>(project_.tracks.size()); ++c)
-            for (int step = 0; step < current->length / (ppq / 4); ++step)
+            for (int step = 0; step < patternForTrack(c)->length / (ppq / 4); ++step)
                 if (stepCell(c, step).contains(event.getPosition()))
                     for (auto &note : patternForTrack(c)->notes)
                         if (note.start == step * ppq / 4)
@@ -668,8 +853,12 @@ void StudioView::mouseWheelMove(const juce::MouseEvent &event, const juce::Mouse
     }
     if (arrangement().contains(event.getPosition()) && event.x < 150 && !project_.tracks.empty())
     {
+        const int row = (arrangement().getHeight() - 40) / static_cast<int>(project_.tracks.size());
+        const int hovered = (event.y - 36) / row;
+        if (event.y < 36 || hovered < 0 || hovered >= static_cast<int>(project_.tracks.size()))
+            return;
         beginEdit();
-        auto &track = project_.tracks[static_cast<std::size_t>(selectedTrack_)];
+        auto &track = project_.tracks[static_cast<std::size_t>(hovered)];
         if (event.mods.isShiftDown())
             track.pan = juce::jlimit(-1.0f, 1.0f, track.pan + (wheel.deltaY > 0 ? 0.1f : -0.1f));
         else
@@ -749,7 +938,8 @@ juce::String StudioView::getTooltip()
 {
     return "Space: play/stop. Arrangement: drag clips, right-click removes, Shift-click duplicates. "
            "M/S: mute/solo. Scroll track: gain, Shift-scroll: pan. Shift-drag ruler: loop. "
-           "Piano roll: click adds, drag moves, right edge changes length. Ctrl+Z: undo.";
+           "Ctrl-wheel: zoom. Shift-wheel: horizontal scroll. Piano roll: click adds, drag moves, "
+           "right edge changes length. Ctrl+Z: undo. F3: mixer.";
 }
 bool StudioView::exerciseEditing()
 {
@@ -772,6 +962,13 @@ bool StudioView::exerciseEditing()
     duplicateNotes(true);
     ok = ok && project_.patterns[0].notes.back().pitch == 83 && validateProject(project_).empty();
     clipboard_.clear();
+    zoomPiano(1, static_cast<float>(pianoGrid().getX()));
+    ok = ok && pianoZoom_ == 2 && pianoSpan() == selectedPattern()->length / 2;
+    pianoStart_ = ppq;
+    ok = ok && tickAt(static_cast<float>(pianoGrid().getX())) == ppq;
+    zoomArrangement(1, 150);
+    ok = ok && arrangementZoom_ == 2 && arrangementTick(150) == 0 &&
+         arrangementSpan() == arrangementTotal() / 2;
     // Track references, rather than the order of the pattern array, choose the target.
     std::swap(project_.patterns[0], project_.patterns[1]);
     editStarted_ = false;

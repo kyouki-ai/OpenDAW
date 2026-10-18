@@ -28,4 +28,6 @@ jobs:
           name: checks-${{ matrix.configuration }}
           path: |
             build/windows/screenshots/
+            build/windows/demo.wav
+            build/windows/demo-export.txt
             build/windows/Testing/Temporary/LastTest.log

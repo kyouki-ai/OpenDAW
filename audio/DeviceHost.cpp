@@ -3,9 +3,9 @@
 
 namespace opendaw
 {
-juce::String DeviceHost::start()
+juce::String DeviceHost::start(const juce::XmlElement *savedState)
 {
-    const auto error = manager.initialise(0, 2, nullptr, true);
+    const auto error = manager.initialise(0, 2, savedState, true);
     if (error.isNotEmpty())
         return error;
     manager.addAudioCallback(this);

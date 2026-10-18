@@ -35,20 +35,21 @@ class SettingsWindow final : public juce::DocumentWindow
     }
 };
 } // namespace
-MainComponent::MainComponent(bool smokeMode) : smokeMode_(smokeMode)
+MainComponent::MainComponent(bool smokeMode, bool persistentSession) : smokeMode_(smokeMode)
 {
     setLookAndFeel(&look);
     setWantsKeyboardFocus(true);
     for (auto *child :
-         {static_cast<juce::Component *>(&play), static_cast<juce::Component *>(&stop),
-          static_cast<juce::Component *>(&tempo), static_cast<juce::Component *>(&themes),
-          static_cast<juce::Component *>(&studio), static_cast<juce::Component *>(&master),
-          static_cast<juce::Component *>(&demo), static_cast<juce::Component *>(&clear),
-          static_cast<juce::Component *>(&undoButton), static_cast<juce::Component *>(&redoButton),
-          static_cast<juce::Component *>(&loop), static_cast<juce::Component *>(&metronome),
+         {static_cast<juce::Component *>(&play),          static_cast<juce::Component *>(&stop),
+          static_cast<juce::Component *>(&tempo),         static_cast<juce::Component *>(&themes),
+          static_cast<juce::Component *>(&studio),        static_cast<juce::Component *>(&master),
+          static_cast<juce::Component *>(&mixer),         static_cast<juce::Component *>(&mixerButton),
+          static_cast<juce::Component *>(&demo),          static_cast<juce::Component *>(&clear),
+          static_cast<juce::Component *>(&undoButton),    static_cast<juce::Component *>(&redoButton),
+          static_cast<juce::Component *>(&loop),          static_cast<juce::Component *>(&metronome),
           static_cast<juce::Component *>(&audioSettings), static_cast<juce::Component *>(&newButton),
-          static_cast<juce::Component *>(&openButton), static_cast<juce::Component *>(&saveButton),
-          static_cast<juce::Component *>(&exportButton), static_cast<juce::Component *>(&instrument)})
+          static_cast<juce::Component *>(&openButton),    static_cast<juce::Component *>(&saveButton),
+          static_cast<juce::Component *>(&exportButton),  static_cast<juce::Component *>(&instrument)})
         addAndMakeVisible(child);
     play.setComponentID("transport-play");
     stop.setComponentID("transport-stop");
@@ -85,9 +86,16 @@ MainComponent::MainComponent(bool smokeMode) : smokeMode_(smokeMode)
     master.setValue(project.masterGain, juce::dontSendNotification);
     master.setTitle("Master volume");
     master.setTooltip("Master output level");
-    master.onDragStart = [this] { remember(); };
+    master.onDragStart = [this]
+    {
+        masterDragging_ = true;
+        remember();
+    };
+    master.onDragEnd = [this] { masterDragging_ = false; };
     master.onValueChange = [this]
     {
+        if (!masterDragging_)
+            remember();
         project.masterGain = static_cast<float>(master.getValue());
         publishProject();
     };
@@ -107,6 +115,10 @@ MainComponent::MainComponent(bool smokeMode) : smokeMode_(smokeMode)
     };
     studio.beforeEdit = [this] { remember(); };
     studio.onEdit = [this] { publishProject(); };
+    mixer.beforeEdit = [this] { remember(); };
+    mixer.onEdit = [this] { publishProject(); };
+    mixer.setVisible(false);
+    mixerButton.onClick = [this] { showMixer(!mixer.isVisible()); };
     demo.onClick = [this]
     {
         remember();
@@ -161,6 +173,8 @@ MainComponent::MainComponent(bool smokeMode) : smokeMode_(smokeMode)
                 for (auto &pattern : project.patterns)
                     pattern.notes.clear();
                 projectFile_ = {};
+                if (sessionStore_ && recoveryReady_)
+                    (void)sessionStore_->clearRecovery();
                 dirty_ = false;
                 undoHistory.clear();
                 redoHistory.clear();
@@ -186,13 +200,32 @@ MainComponent::MainComponent(bool smokeMode) : smokeMode_(smokeMode)
             publishProject();
         }
     };
-    setSize(1280, 800);
+    Preferences preferences;
+    if (!smokeMode_ && persistentSession)
+    {
+        sessionStore_ = std::make_unique<SessionStore>(
+            juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("OpenDAW"));
+        preferences = sessionStore_->preferences();
+        themes.setSelectedId(preferences.theme, juce::sendNotificationSync);
+    }
+    setSize(preferences.width, preferences.height);
     publishProject(false);
     if (!smokeMode_)
-        error_ = device.start();
+    {
+        const auto savedDevice = juce::parseXML(preferences.deviceXml);
+        error_ = device.start(savedDevice.get());
+    }
     else
         engine.prepare(48000);
     updateTransport();
+    lastCheckpoint_ = juce::Time::getMillisecondCounter();
+    if (sessionStore_)
+        juce::Timer::callAfterDelay(100,
+                                    [safe = juce::Component::SafePointer<MainComponent>(this)]
+                                    {
+                                        if (safe)
+                                            safe->offerRecovery();
+                                    });
     startTimerHz(30);
 }
 MainComponent::~MainComponent()
@@ -219,10 +252,9 @@ void MainComponent::publishProject(bool markDirty)
     error_ = juce::String(compileProject(project, pendingState));
     if (error_.isNotEmpty())
     {
-        if (markDirty && !undoHistory.empty())
+        if (markDirty)
         {
-            project = undoHistory.back();
-            undoHistory.pop_back();
+            project = lastValidProject_;
             studio.resetSelection();
             if (compileProject(project, pendingState).empty())
                 pending_ = !engine.publish(pendingState);
@@ -231,7 +263,10 @@ void MainComponent::publishProject(bool markDirty)
         return;
     }
     pending_ = !engine.publish(pendingState);
+    lastValidProject_ = project;
     dirty_ = dirty_ || markDirty;
+    if (markDirty)
+        ++revision_;
     tempo.setValue(project.bpm, juce::dontSendNotification);
     master.setValue(project.masterGain, juce::dontSendNotification);
     loop.setToggleState(project.loopEnabled, juce::dontSendNotification);
@@ -239,6 +274,7 @@ void MainComponent::publishProject(bool markDirty)
     undoButton.setEnabled(!undoHistory.empty());
     redoButton.setEnabled(!redoHistory.empty());
     studio.repaint();
+    mixer.refresh();
     repaint();
 }
 void MainComponent::undo()
@@ -269,6 +305,14 @@ void MainComponent::showAudioSettings()
         settingsWindow = std::make_unique<SettingsWindow>(device, look);
     settingsWindow->setVisible(true);
     settingsWindow->toFront(true);
+}
+void MainComponent::showMixer(bool show)
+{
+    mixer.setVisible(show);
+    studio.setVisible(!show);
+    mixerButton.setToggleState(show, juce::dontSendNotification);
+    if (show)
+        mixer.refresh();
 }
 void MainComponent::confirmDiscard(std::function<void()> proceed)
 {
@@ -304,7 +348,85 @@ void MainComponent::requestClose(std::function<void()> finish)
         finish();
         return;
     }
-    confirmDiscard(std::move(finish));
+    confirmDiscard(
+        [this, finish = std::move(finish)]
+        {
+            savePreferences();
+            if (sessionStore_ && recoveryReady_)
+                (void)sessionStore_->clearRecovery();
+            finish();
+        });
+}
+void MainComponent::savePreferences()
+{
+    if (!sessionStore_)
+        return;
+    Preferences p;
+    p.theme = themes.getSelectedId();
+    p.width = juce::jlimit(960, 3840, getWidth());
+    p.height = juce::jlimit(640, 2160, getHeight());
+    if (const auto xml = device.manager.createStateXml())
+        p.deviceXml = xml->toString();
+    if (const auto result = sessionStore_->savePreferences(p); result.failed())
+        error_ = result.getErrorMessage();
+}
+void MainComponent::offerRecovery()
+{
+    if (!sessionStore_)
+        return;
+    if (!sessionStore_->hasRecovery())
+    {
+        recoveryReady_ = true;
+        return;
+    }
+    Project recovered;
+    auto result = sessionStore_->loadRecovery(recovered);
+    if (result.wasOk())
+    {
+        auto state = std::make_unique<RenderState>();
+        if (const auto error = compileProject(recovered, *state); !error.empty())
+            result = juce::Result::fail(error);
+    }
+    if (result.failed())
+    {
+        error_ = "Recovery could not be read. Original kept; automatic checkpoints paused.";
+        repaint();
+        return;
+    }
+    const juce::Component::SafePointer<MainComponent> safe(this);
+    juce::AlertWindow::showYesNoCancelBox(
+        juce::MessageBoxIconType::QuestionIcon, "Recover your session?",
+        "An unfinished session was found. Restore your notes and arrangement?", "Recover", "Discard", "Exit",
+        this,
+        juce::ModalCallbackFunction::create(
+            [safe, recovered = std::move(recovered)](int answer) mutable
+            {
+                if (!safe)
+                    return;
+                if (answer == 1)
+                {
+                    safe->engine.stop();
+                    safe->playing_ = false;
+                    safe->project = std::move(recovered);
+                    safe->projectFile_ = {};
+                    safe->undoHistory.clear();
+                    safe->redoHistory.clear();
+                    safe->studio.resetSelection();
+                    safe->recoveryReady_ = true;
+                    safe->publishProject();
+                    safe->notice_ = "Recovered session. Save it with Ctrl+S.";
+                    safe->updateTransport();
+                }
+                else if (answer == 2)
+                {
+                    safe->recoveryReady_ = safe->sessionStore_->clearRecovery();
+                    if (!safe->recoveryReady_)
+                        safe->error_ = "Could not discard recovery; original kept.";
+                    safe->repaint();
+                }
+                else
+                    juce::JUCEApplication::getInstance()->quit();
+            }));
 }
 void MainComponent::save(bool chooseFile, std::function<void(bool)> complete)
 {
@@ -321,6 +443,8 @@ void MainComponent::save(bool chooseFile, std::function<void(bool)> complete)
         if (result.wasOk())
         {
             dirty_ = false;
+            if (sessionStore_ && recoveryReady_)
+                (void)sessionStore_->clearRecovery();
             notice_ = "Saved " + projectFile_.getFileName();
         }
         repaint();
@@ -358,6 +482,8 @@ void MainComponent::save(bool chooseFile, std::function<void(bool)> complete)
                               {
                                   safe->projectFile_ = file;
                                   safe->dirty_ = false;
+                                  if (safe->sessionStore_ && safe->recoveryReady_)
+                                      (void)safe->sessionStore_->clearRecovery();
                                   safe->notice_ = "Saved " + file.getFileName();
                               }
                               safe->repaint();
@@ -405,6 +531,8 @@ void MainComponent::open()
                     safe->playing_ = false;
                     safe->project = std::move(loaded);
                     safe->projectFile_ = file;
+                    if (safe->sessionStore_ && safe->recoveryReady_)
+                        (void)safe->sessionStore_->clearRecovery();
                     safe->dirty_ = false;
                     safe->undoHistory.clear();
                     safe->redoHistory.clear();
@@ -475,6 +603,19 @@ void MainComponent::exportAudio()
 }
 void MainComponent::timerCallback()
 {
+    const auto now = juce::Time::getMillisecondCounter();
+    if (sessionStore_ && recoveryReady_ && now - lastCheckpoint_ >= 30000)
+    {
+        lastCheckpoint_ = now;
+        if (dirty_ && revision_ != checkpointRevision_)
+        {
+            const auto result = sessionStore_->checkpoint(project);
+            if (result.wasOk())
+                checkpointRevision_ = revision_;
+            else
+                error_ = "Automatic checkpoint failed: " + result.getErrorMessage();
+        }
+    }
     const int selectedTrack = studio.selectedTrack();
     if (selectedTrack < static_cast<int>(project.tracks.size()))
         instrument.setSelectedId(
@@ -500,6 +641,8 @@ void MainComponent::timerCallback()
     if (playing_ || engine.meters.masterPeak.load(std::memory_order_relaxed) > 0.001f)
     {
         studio.repaint();
+        if (mixer.isVisible())
+            mixer.refresh();
         repaint();
     }
 }
@@ -562,10 +705,11 @@ void MainComponent::paint(juce::Graphics &g)
     g.setColour(t.surface);
     g.fillRoundedRectangle(static_cast<float>(mx - 8), 104, 80, static_cast<float>(h - 152), 8);
     text(g, "MASTER", {mx, 118, 70, 22}, 11, t.muted, true);
-    const float peak = juce::jlimit(0.0f, 1.0f, engine.meters.masterPeak.load());
     const float mh = static_cast<float>(std::max(70, (h - 240) / 2));
     for (int channel = 0; channel < 2; ++channel)
     {
+        const float peak = juce::jlimit(
+            0.0f, 1.0f, channel == 0 ? engine.meters.masterLeft.load() : engine.meters.masterRight.load());
         const float x = static_cast<float>(mx + 12 + channel * 20);
         g.setColour(t.background);
         g.fillRoundedRectangle(x, 158, 9, mh, 2);
@@ -590,6 +734,7 @@ void MainComponent::resized()
     tempo.setBounds(tx + 130, 32, 108, 32);
     themes.setBounds(getWidth() - 202, 30, 178, 36);
     studio.setBounds(190, 104, getWidth() - 298, getHeight() - 152);
+    mixer.setBounds(studio.getBounds());
     newButton.setBounds(28, 192, 64, 32);
     openButton.setBounds(100, 192, 64, 32);
     saveButton.setBounds(28, 234, 64, 32);
@@ -601,11 +746,17 @@ void MainComponent::resized()
     loop.setBounds(28, 394, 64, 32);
     metronome.setBounds(100, 394, 64, 32);
     instrument.setBounds(28, 456, 136, 32);
+    mixerButton.setBounds(28, 498, 136, 32);
     audioSettings.setBounds(28, getHeight() - 98, 136, 32);
     master.setBounds(getWidth() - 77, getHeight() / 2 + 84, 50, std::max(50, getHeight() / 2 - 188));
 }
 bool MainComponent::keyPressed(const juce::KeyPress &key)
 {
+    if (key == juce::KeyPress::F3Key)
+    {
+        showMixer(!mixer.isVisible());
+        return true;
+    }
     if (key.getModifiers().isCommandDown())
     {
         if (key.getKeyCode() == 'S')
@@ -655,6 +806,8 @@ bool MainComponent::runSmokeChecks()
 {
     if (!exerciseProjectStore(juce::File::getCurrentWorkingDirectory().getChildFile("persistence-smoke")))
         return false;
+    if (!exerciseSessionStore(juce::File::getCurrentWorkingDirectory().getChildFile("session-smoke")))
+        return false;
     std::array<float, 512> left{}, right{};
     float *outputs[]{left.data(), right.data()};
     const auto pump = [this, &outputs]
@@ -681,7 +834,8 @@ bool MainComponent::runSmokeChecks()
     pump();
     for (int theme : {1, 2, 3})
         themes.setSelectedId(theme, juce::sendNotificationSync);
-    if (look.tokens.accent != ThemeTokens::ember().accent || !studio.exerciseEditing())
+    if (look.tokens.accent != ThemeTokens::ember().accent || !studio.exerciseEditing() ||
+        !mixer.exerciseEditing())
         return false;
     pump();
     undo();
