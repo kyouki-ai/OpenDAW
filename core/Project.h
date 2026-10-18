@@ -1,0 +1,59 @@
+#pragma once
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace opendaw
+{
+using Tick = std::int64_t;
+inline constexpr Tick ppq = 960;
+
+// UUID strings are generated at the application boundary, never in the audio callback.
+struct EntityId
+{
+    std::string value;
+    bool operator==(const EntityId &) const = default;
+};
+struct Note
+{
+    EntityId id;
+    Tick start = 0;
+    Tick duration = ppq;
+    int pitch = 60;
+    float velocity = 0.8f;
+};
+struct Pattern
+{
+    EntityId id;
+    std::string name;
+    Tick length = ppq * 4;
+    std::vector<Note> notes;
+};
+struct Clip
+{
+    EntityId id;
+    EntityId patternId;
+    Tick start = 0;
+    Tick length = ppq * 4;
+};
+struct Track
+{
+    EntityId id;
+    std::string name;
+    std::vector<Clip> clips;
+};
+struct Project
+{
+    EntityId id;
+    std::string name = "Untitled session";
+    double bpm = 124.0;
+    int numerator = 4;
+    int denominator = 4;
+    int schemaVersion = 1;
+    std::vector<Pattern> patterns;
+    std::vector<Track> tracks;
+};
+[[nodiscard]] bool validTempo(double bpm) noexcept;
+// Throws on invalid musical/sample-rate inputs or int64 sample overflow.
+[[nodiscard]] std::int64_t ticksToSamples(Tick ticks, double bpm, double sampleRate);
+} // namespace opendaw

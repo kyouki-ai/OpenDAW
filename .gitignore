@@ -1,0 +1,13 @@
+/build/
+/.tools/
+/CMakeUserPresets.json
+/.vs/
+*.user
+*.pdb
+*.ilk
+*.obj
+*.log
+.env
+.env.*
+!.env.example
+/artifacts/
