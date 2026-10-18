@@ -79,7 +79,8 @@ std::string validateProject(const Project &p)
             track.pan < -1 || track.pan > 1 || static_cast<int>(track.instrument) < 0 ||
             static_cast<int>(track.instrument) > 4 || !std::isfinite(track.effectGain) ||
             track.effectGain < 0 || track.effectGain > 2 || !std::isfinite(track.filterCutoff) ||
-            track.filterCutoff < 20 || track.filterCutoff > 20000)
+            track.filterCutoff < 20 || track.filterCutoff > 20000 ||
+            (!track.patternId.value.empty() && !patterns.contains(track.patternId.value)))
             return "Invalid track or duplicate UUID";
         for (const auto &clip : track.clips)
             if (!insert(clip.id) || !patterns.contains(clip.patternId.value) || clip.start < 0 ||
@@ -122,6 +123,7 @@ Project makeDemoProject()
             }
         }
         Track track{newId(), names[channel]};
+        track.patternId = pattern.id;
         track.instrument = types[channel];
         track.gain = channel == 2 ? 0.6f : channel == 4 ? 0.5f : 0.75f;
         track.clips.push_back({newId(), pattern.id, 0, p.loopEnd});

@@ -9,7 +9,7 @@ include(CTest)
 option(OPENDAW_BUILD_APP "Build the JUCE desktop application" ON)
 set(OPENDAW_JUCE_PATH "" CACHE PATH "Existing JUCE 8.0.12 source tree")
 
-add_library(opendaw_core STATIC core/Project.cpp audio/Transport.cpp audio/AudioEngine.cpp export/WavExport.cpp)
+add_library(opendaw_core STATIC core/Project.cpp core/Editing.cpp audio/Transport.cpp audio/AudioEngine.cpp export/WavExport.cpp)
 target_include_directories(opendaw_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 if(MSVC)
     target_compile_options(opendaw_core PRIVATE /W4 /permissive- /utf-8)

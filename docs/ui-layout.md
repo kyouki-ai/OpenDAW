@@ -4,6 +4,9 @@
 бренд, Play/Stop, BPM, позиция из sample clock, размер и selector темы.
 Слева панель с файлами, undo/redo, loop/click, инструментом и Audio settings.
 По центру arrangement с клипами, mute/solo и канальными уровнями.
+«+» или Ctrl+T добавляет инструмент. Контекстное меню имени дорожки позволяет
+переименовать, дублировать или удалить её; операции поддерживают undo/redo.
+Копия получает собственные ноты и паттерны. При восьми дорожках step editor прокручивается.
 Снизу вкладки step sequencer и piano roll; справа master fader и meters.
 F3 открывает mixer на месте центральных редакторов: полосы каналов, pan, low-pass,
 input gain, volume и mute/solo. При небольшом окне используется viewport с прокруткой.

@@ -54,10 +54,23 @@ juce::Rectangle<int> StudioView::stepCell(int channel, int step) const
     auto *pattern = const_cast<StudioView *>(this)->patternForTrack(channel);
     const int steps = pattern ? static_cast<int>(pattern->length / (ppq / 4)) : 16;
     const int width = getWidth() - 168;
-    const int row = juce::jlimit(
-        24, 50, (editor().getHeight() - 110) / std::max(1, static_cast<int>(project_.tracks.size())));
-    return {156 + step * width / steps + 2, editor().getY() + 64 + channel * row, width / steps - 4,
-            std::min(28, row - 8)};
+    const int row = stepRowHeight();
+    return {156 + step * width / steps + 2, editor().getY() + 64 + channel * row - stepScroll_,
+            width / steps - 4, std::min(28, row - 8)};
+}
+int StudioView::stepRowHeight() const
+{
+    return juce::jlimit(24, 50,
+                        (editor().getHeight() - 110) / std::max(1, static_cast<int>(project_.tracks.size())));
+}
+juce::Rectangle<int> StudioView::stepViewport() const
+{
+    return {8, editor().getY() + 60, getWidth() - 16, std::max(24, editor().getHeight() - 104)};
+}
+int StudioView::maxStepScroll() const
+{
+    return std::max(0, static_cast<int>(project_.tracks.size()) * stepRowHeight() -
+                           stepViewport().getHeight() + 4);
 }
 Pattern *StudioView::selectedPattern()
 {
@@ -75,6 +88,10 @@ Pattern *StudioView::patternForTrack(int index)
             if (pattern.id == currentPattern_)
                 return &pattern;
     auto &track = project_.tracks[static_cast<std::size_t>(index)];
+    if (!track.patternId.value.empty())
+        for (auto &pattern : project_.patterns)
+            if (pattern.id == track.patternId)
+                return &pattern;
     if (!track.clips.empty())
         for (auto &pattern : project_.patterns)
             if (pattern.id == track.clips[0].patternId)
@@ -105,6 +122,7 @@ void StudioView::resetSelection()
     topPitch_ = 66;
     pianoStart_ = arrangementStart_ = 0;
     pianoZoom_ = arrangementZoom_ = 1;
+    stepScroll_ = 0;
 }
 Tick StudioView::barLength() const
 {
@@ -217,7 +235,12 @@ void StudioView::paint(juce::Graphics &g)
         g.setColour(t.border.withAlpha(0.7f));
         g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 8, 1);
     }
-    label(g, "Arrangement", {16, 5, 200, 26}, 16, t.text, true);
+    label(g, "Arrangement", {16, 5, 104, 26}, 16, t.text, true);
+    g.setColour(project_.tracks.size() < 8 ? t.raised : t.surface);
+    g.fillRoundedRectangle(120, 7, 24, 24, 4);
+    g.setColour(project_.tracks.size() < 8 ? t.accent : t.muted);
+    g.drawLine(126, 19, 138, 19, 1.5f);
+    g.drawLine(132, 13, 132, 25, 1.5f);
     const Tick timeline = arrangementSpan();
     const float timeWidth = static_cast<float>(getWidth() - 158);
     const auto xAt = [this, timeWidth, timeline](Tick tick)
@@ -293,23 +316,26 @@ void StudioView::paint(juce::Graphics &g)
             label(g, juce::String(track.name) + " / pattern", box.toNearestInt().reduced(8).withHeight(18),
                   10, colour);
             g.reduceClipRegion(box.toNearestInt().reduced(2));
-            for (const auto &pattern : project_.patterns)
-                if (pattern.id == clip.patternId)
-                    for (Tick repeat = 0; repeat < clip.length; repeat += pattern.length)
-                        for (const auto &note : pattern.notes)
-                        {
-                            if (repeat + note.start >= clip.length)
-                                continue;
-                            const float nx = xAt(clip.start + repeat + note.start) + 3;
-                            const float pitchSpacing = juce::jlimit(0.0f, 1.5f, (box.getHeight() - 38) / 12);
-                            const float ny =
-                                box.getBottom() - 7 - static_cast<float>(note.pitch % 12) * pitchSpacing;
-                            g.setColour(colour.withAlpha(0.85f));
-                            g.fillRoundedRectangle(
-                                nx, ny,
-                                std::max(2.0f, static_cast<float>(note.duration) / timeline * timeWidth - 2),
-                                2.5f, 1);
-                        }
+            if (rowHeight >= 40)
+                for (const auto &pattern : project_.patterns)
+                    if (pattern.id == clip.patternId)
+                        for (Tick repeat = 0; repeat < clip.length; repeat += pattern.length)
+                            for (const auto &note : pattern.notes)
+                            {
+                                if (repeat + note.start >= clip.length)
+                                    continue;
+                                const float nx = xAt(clip.start + repeat + note.start) + 3;
+                                const float pitchSpacing =
+                                    juce::jlimit(0.0f, 1.5f, (box.getHeight() - 38) / 12);
+                                const float ny =
+                                    box.getBottom() - 7 - static_cast<float>(note.pitch % 12) * pitchSpacing;
+                                g.setColour(colour.withAlpha(0.85f));
+                                g.fillRoundedRectangle(
+                                    nx, ny,
+                                    std::max(2.0f,
+                                             static_cast<float>(note.duration) / timeline * timeWidth - 2),
+                                    2.5f, 1);
+                            }
             g.restoreState();
         }
     }
@@ -349,6 +375,9 @@ void StudioView::paint(juce::Graphics &g)
           12, t.accent);
     if (!piano_)
     {
+        stepScroll_ = juce::jlimit(0, maxStepScroll(), stepScroll_);
+        g.saveState();
+        g.reduceClipRegion(stepViewport());
         for (std::size_t c = 0; c < project_.tracks.size(); ++c)
         {
             Pattern *p = patternForTrack(static_cast<int>(c));
@@ -384,7 +413,11 @@ void StudioView::paint(juce::Graphics &g)
                 }
             }
         }
-        label(g, "Click a step to toggle / scroll for velocity / select a track for piano roll",
+        g.restoreState();
+        label(g,
+              maxStepScroll() > 0
+                  ? "Scroll: browse tracks / Shift-scroll: velocity / +: add instrument"
+                  : "Click: toggle / scroll: velocity / +: add instrument / right-click track: options",
               {16, e.getBottom() - 28, getWidth() - 32, 22}, 11, t.muted);
         return;
     }
@@ -477,6 +510,12 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
     dragOrigin_ = event.position;
     dragTimeline_ = arrangementSpan();
     const auto a = arrangement(), e = editor();
+    if (a.contains(event.getPosition()) && event.y < 34 && event.x < 150)
+    {
+        if (event.x >= 116 && project_.tracks.size() < 8)
+            showAddTrackMenu(event.getScreenPosition());
+        return;
+    }
     auto *pattern = selectedPattern();
     if (e.contains(event.getPosition()) && event.y < e.getY() + 40)
     {
@@ -551,6 +590,12 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
         const int localY = event.y - 36 - channel * rh;
         if (event.x < 150)
         {
+            if (event.mods.isRightButtonDown())
+            {
+                showTrackMenu(channel, event.getScreenPosition());
+                repaint();
+                return;
+            }
             if (localY >= 28 && localY < 49 && event.x >= 18 && event.x < 70)
             {
                 beginEdit();
@@ -619,6 +664,8 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
         return;
     if (!piano_)
     {
+        if (!stepViewport().contains(event.getPosition()))
+            return;
         for (int channel = 0; channel < static_cast<int>(project_.tracks.size()); ++channel)
             for (int step = 0; step < patternForTrack(channel)->length / (ppq / 4); ++step)
                 if (stepCell(channel, step).contains(event.getPosition()))
@@ -835,6 +882,14 @@ void StudioView::mouseWheelMove(const juce::MouseEvent &event, const juce::Mouse
     const auto e = editor();
     if (!piano_ && e.contains(event.getPosition()))
     {
+        if (maxStepScroll() > 0 && !event.mods.isShiftDown())
+        {
+            stepScroll_ = juce::jlimit(0, maxStepScroll(), stepScroll_ + (wheel.deltaY > 0 ? -24 : 24));
+            repaint();
+            return;
+        }
+        if (!stepViewport().contains(event.getPosition()))
+            return;
         auto *current = selectedPattern();
         if (!current)
             return;
@@ -902,6 +957,11 @@ bool StudioView::keyPressed(const juce::KeyPress &key)
     editStarted_ = false;
     if (key.getModifiers().isCommandDown())
     {
+        if (key.getKeyCode() == 'T')
+        {
+            createTrack(Track::Instrument::sine);
+            return true;
+        }
         if (key.getKeyCode() == 'A')
         {
             selectedNotes_.clear();
@@ -970,9 +1030,107 @@ bool StudioView::keyPressed(const juce::KeyPress &key)
     }
     return false;
 }
+void StudioView::applyTrackEdit(std::function<EditResult(Project &)> edit)
+{
+    auto candidate = project_;
+    const auto result = edit(candidate);
+    if (!result.error.empty())
+    {
+        if (onError)
+            onError(juce::String(result.error));
+        return;
+    }
+    editStarted_ = false;
+    beginEdit();
+    project_ = std::move(candidate);
+    resetSelection();
+    for (std::size_t i = 0; i < project_.tracks.size(); ++i)
+        if (project_.tracks[i].id == result.trackId)
+            selectedTrack_ = static_cast<int>(i);
+    focusPattern();
+    stepScroll_ = juce::jlimit(0, maxStepScroll(),
+                               (selectedTrack_ + 1) * stepRowHeight() - stepViewport().getHeight() + 4);
+    changed();
+}
+void StudioView::createTrack(Track::Instrument instrument)
+{
+    applyTrackEdit([instrument](Project &project) { return addInstrumentTrack(project, instrument); });
+}
+void StudioView::showAddTrackMenu(juce::Point<int> screen)
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader("Add an instrument");
+    menu.addItem(1, "Kick");
+    menu.addItem(2, "Snare");
+    menu.addItem(3, "Closed hat");
+    menu.addItem(4, "Sine synth");
+    menu.addItem(5, "Triangle bass");
+    const juce::Component::SafePointer<StudioView> safe(this);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea({screen.x, screen.y, 1, 1}),
+        [safe](int result)
+        {
+            if (safe && result >= 1 && result <= 5)
+                safe->createTrack(static_cast<Track::Instrument>(result - 1));
+        });
+}
+void StudioView::showTrackMenu(int track, juce::Point<int> screen)
+{
+    if (track < 0 || track >= static_cast<int>(project_.tracks.size()))
+        return;
+    const auto id = project_.tracks[static_cast<std::size_t>(track)].id;
+    juce::PopupMenu menu;
+    menu.addSectionHeader(juce::String(project_.tracks[static_cast<std::size_t>(track)].name));
+    menu.addItem(1, "Rename track...");
+    menu.addItem(2, "Duplicate track", project_.tracks.size() < 8);
+    menu.addItem(3, "Delete track");
+    const juce::Component::SafePointer<StudioView> safe(this);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options().withTargetComponent(this).withTargetScreenArea({screen.x, screen.y, 1, 1}),
+        [safe, id](int result)
+        {
+            if (!safe)
+                return;
+            if (result == 1)
+                safe->showRenameTrack(id);
+            else if (result == 2)
+                safe->applyTrackEdit([id](Project &project) { return duplicateTrack(project, id); });
+            else if (result == 3)
+                safe->applyTrackEdit([id](Project &project) { return removeTrack(project, id); });
+        });
+}
+void StudioView::showRenameTrack(const EntityId &id)
+{
+    const auto track = std::find_if(project_.tracks.begin(), project_.tracks.end(),
+                                    [&id](const Track &item) { return item.id == id; });
+    if (track == project_.tracks.end())
+        return;
+    auto *dialog = new juce::AlertWindow("Name this track", "Choose a name for your instrument.",
+                                         juce::MessageBoxIconType::NoIcon, this);
+    dialog->addTextEditor("name", juce::String(track->name), "Track name");
+    dialog->getTextEditor("name")->setInputRestrictions(64);
+    dialog->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    const juce::Component::SafePointer<StudioView> safe(this);
+    const juce::Component::SafePointer<juce::AlertWindow> safeDialog(dialog);
+    dialog->enterModalState(true,
+                            juce::ModalCallbackFunction::create(
+                                [safe, safeDialog, id](int result)
+                                {
+                                    if (result == 1 && safe && safeDialog)
+                                    {
+                                        const auto name =
+                                            safeDialog->getTextEditorContents("name").trim().toStdString();
+                                        safe->applyTrackEdit([id, name](Project &project)
+                                                             { return renameTrack(project, id, name); });
+                                    }
+                                }),
+                            true);
+}
 juce::String StudioView::getTooltip()
 {
-    return "Space: play/stop. Arrangement: drag clips, right-click removes, Shift-click duplicates. "
+    return "Space: play/stop. + or Ctrl+T: add track; right-click a track name for rename/duplicate/delete. "
+           "Arrangement: drag clips, right-click removes, Shift-click duplicates. "
            "M/S: mute/solo. Scroll track: gain, Shift-scroll: pan. Shift-drag ruler: loop. "
            "Ctrl-wheel: zoom. Shift-wheel: horizontal scroll. Piano roll: click adds, drag moves, "
            "right edge changes length. Arrows: move notes; Shift+arrows: length/octave. "
@@ -1018,6 +1176,29 @@ bool StudioView::exerciseEditing()
     const auto snareCount = project_.patterns[0].notes.size();
     toggleStep(0, 2);
     ok = ok && project_.patterns[0].notes.size() == snareCount;
+    project_ = saved;
+    resetSelection();
+    createTrack(Track::Instrument::sine);
+    ok = ok && project_.tracks.size() == saved.tracks.size() + 1;
+    const auto addedId = project_.tracks.back().id;
+    applyTrackEdit([addedId](Project &project) { return renameTrack(project, addedId, "New lead"); });
+    ok = ok && project_.tracks.back().name == "New lead";
+    applyTrackEdit([addedId](Project &project) { return duplicateTrack(project, addedId); });
+    ok = ok && project_.tracks.size() == saved.tracks.size() + 2;
+    applyTrackEdit([addedId](Project &project) { return removeTrack(project, addedId); });
+    for (int attempt = 0; attempt < 8 && project_.tracks.size() < 8; ++attempt)
+        createTrack(Track::Instrument::hat);
+    ok = ok && project_.tracks.size() == 8 && validateProject(project_).empty();
+    const auto bounds = getBounds();
+    setSize(662, 488);
+    stepScroll_ = maxStepScroll();
+    ok = ok && maxStepScroll() > 0 && stepViewport().contains(stepCell(7, 0));
+    project_.tracks.back().clips.clear();
+    ok = ok && selectedPattern() && selectedPattern()->id == project_.tracks.back().patternId;
+    const auto patternCount = project_.patterns.size();
+    createTrack(Track::Instrument::sine);
+    ok = ok && project_.tracks.size() == 8 && project_.patterns.size() == patternCount;
+    setBounds(bounds);
     project_ = saved;
     resetSelection();
     piano_ = false;

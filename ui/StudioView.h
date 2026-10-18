@@ -1,5 +1,6 @@
 #pragma once
 #include "audio/AudioEngine.h"
+#include "core/Editing.h"
 #include "ui/Theme.h"
 #include <functional>
 
@@ -17,6 +18,8 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     bool keyPressed(const juce::KeyPress &) override;
     juce::String getTooltip() override;
     std::function<void()> beforeEdit, onEdit;
+    std::function<void(const juce::String &)> onError;
+    void createTrack(Track::Instrument);
     [[nodiscard]] int selectedTrack() const
     {
         return selectedTrack_;
@@ -57,6 +60,13 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     Tick arrangementTick(float x) const;
     void zoomPiano(int direction, float anchor);
     void zoomArrangement(int direction, float anchor);
+    void applyTrackEdit(std::function<EditResult(Project &)>);
+    void showAddTrackMenu(juce::Point<int> screenPosition);
+    void showTrackMenu(int track, juce::Point<int> screenPosition);
+    void showRenameTrack(const EntityId &);
+    int stepRowHeight() const;
+    int maxStepScroll() const;
+    juce::Rectangle<int> stepViewport() const;
     Project &project_;
     AudioEngine &engine_;
     const ThemeTokens &theme_;
@@ -72,5 +82,6 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     std::vector<std::string> selectedNotes_;
     std::vector<Note> clipboard_;
     EntityId currentPattern_;
+    int stepScroll_ = 0;
 };
 } // namespace opendaw

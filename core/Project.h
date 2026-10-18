@@ -56,6 +56,7 @@ struct Track
     float effectGain = 1.0f;
     float filterCutoff = 20000.0f;
     bool filterEnabled = false;
+    EntityId patternId; // Default editor pattern survives removing every arrangement clip.
 };
 struct Project
 {

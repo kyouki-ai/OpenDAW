@@ -152,7 +152,8 @@ class OpenDAWApplication final : public juce::JUCEApplication
             setResizable(true, true);
             setResizeLimits(960, 640, 3840, 2160);
             centreWithSize(getContentComponent()->getWidth(), getContentComponent()->getHeight());
-            setVisible(true);
+            // Smoke captures render the actual components without raising a window over other apps.
+            setVisible(!smokeMode && persistentSession);
         }
         void closeButtonPressed() override
         {

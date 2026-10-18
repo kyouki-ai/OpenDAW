@@ -119,6 +119,7 @@ juce::String projectJson(const Project &p)
         auto item = object();
         set(item, "id", track.id.value);
         set(item, "name", track.name);
+        set(item, "pattern", track.patternId.value);
         set(item, "instrument", static_cast<int>(track.instrument));
         set(item, "gain", track.gain);
         set(item, "pan", track.pan);
@@ -209,6 +210,9 @@ juce::Result parseProjectJson(const juce::String &text, Project &output)
             Track track;
             track.id = {string(field(item, "id"))};
             track.name = string(field(item, "name"));
+            const bool hasDefaultPattern = item.getDynamicObject()->hasProperty("pattern");
+            if (hasDefaultPattern)
+                track.patternId = {string(field(item, "pattern"))};
             track.instrument = static_cast<Track::Instrument>(number(field(item, "instrument")));
             track.gain = static_cast<float>(real(field(item, "gain")));
             track.pan = static_cast<float>(real(field(item, "pan")));
@@ -226,6 +230,8 @@ juce::Result parseProjectJson(const juce::String &text, Project &output)
                                        {string(field(c, "pattern"))},
                                        number(field(c, "start")),
                                        number(field(c, "length"))});
+            if (!hasDefaultPattern && !track.clips.empty())
+                track.patternId = track.clips.front().patternId;
             p.tracks.push_back(std::move(track));
         }
         if (const auto error = validateProject(p); !error.empty())
@@ -309,6 +315,12 @@ bool exerciseProjectStore(const juce::File &folder)
         backup.id != original.id || backup.bpm != original.bpm)
         return false;
     const auto intact = projectJson(loaded);
+    auto noClips = original;
+    noClips.tracks[0].clips.clear();
+    Project emptyTrack;
+    if (parseProjectJson(projectJson(noClips), emptyTrack).failed() ||
+        emptyTrack.tracks[0].patternId != noClips.tracks[0].patternId || !emptyTrack.tracks[0].clips.empty())
+        return false;
     if (parseProjectJson("{ broken", loaded).wasOk() || projectJson(loaded) != intact)
         return false;
     const auto future = projectJson(original).replace("\"version\": 1", "\"version\": 99");

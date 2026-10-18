@@ -160,6 +160,11 @@ MainComponent::MainComponent(bool smokeMode, bool persistentSession) : smokeMode
     };
     studio.beforeEdit = [this] { remember(); };
     studio.onEdit = [this] { publishProject(); };
+    studio.onError = [this](const juce::String &message)
+    {
+        error_ = message;
+        repaint();
+    };
     mixer.beforeEdit = [this] { remember(); };
     mixer.onEdit = [this] { publishProject(); };
     mixer.setVisible(false);
@@ -319,6 +324,7 @@ void MainComponent::publishProject(bool markDirty)
     metronome.setToggleState(project.metronome, juce::dontSendNotification);
     undoButton.setEnabled(!undoHistory.empty());
     redoButton.setEnabled(!redoHistory.empty());
+    instrument.setEnabled(!project.tracks.empty());
     studio.repaint();
     mixer.refresh();
     repaint();
@@ -828,6 +834,11 @@ bool MainComponent::keyPressed(const juce::KeyPress &key)
     }
     if (key.getModifiers().isCommandDown())
     {
+        if (key.getKeyCode() == 'T')
+        {
+            studio.createTrack(Track::Instrument::sine);
+            return true;
+        }
         if (key.getKeyCode() == 'S')
         {
             save(key.getModifiers().isShiftDown());
