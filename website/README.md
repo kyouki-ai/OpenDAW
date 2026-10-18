@@ -1,5 +1,7 @@
 # Сайт OpenDAW
 
+Публичная версия: https://kyouki-ai.github.io/OpenDAW/.
+
 Статический сайт без зависимостей и сборки. `dist/` содержит готовые HTML, CSS,
 JavaScript и собственные media assets. GitHub Pages получает `dist/` из workflow
 `Website` после успешных проверок при изменениях в main.

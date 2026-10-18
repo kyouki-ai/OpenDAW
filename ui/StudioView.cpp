@@ -932,6 +932,42 @@ bool StudioView::keyPressed(const juce::KeyPress &key)
         changed();
         return true;
     }
+    if (piano_ && !selectedNotes_.empty() && !key.getModifiers().isCommandDown())
+    {
+        Tick move = 0, length = 0;
+        int transpose = 0;
+        const bool shift = key.getModifiers().isShiftDown();
+        if (key.getKeyCode() == juce::KeyPress::leftKey)
+            shift ? length = -snap_ : move = -snap_;
+        else if (key.getKeyCode() == juce::KeyPress::rightKey)
+            shift ? length = snap_ : move = snap_;
+        else if (key.getKeyCode() == juce::KeyPress::upKey)
+            transpose = shift ? 12 : 1;
+        else if (key.getKeyCode() == juce::KeyPress::downKey)
+            transpose = shift ? -12 : -1;
+        else
+            return false;
+        for (const auto &note : pattern->notes)
+            if (selected(selectedNotes_, note))
+            {
+                move = juce::jlimit<Tick>(-note.start, pattern->length - note.start - note.duration, move);
+                length = juce::jlimit<Tick>(std::min(snap_, note.duration) - note.duration,
+                                            pattern->length - note.start - note.duration, length);
+                transpose = juce::jlimit(-note.pitch, 127 - note.pitch, transpose);
+            }
+        if (move == 0 && length == 0 && transpose == 0)
+            return true;
+        beginEdit();
+        for (auto &note : pattern->notes)
+            if (selected(selectedNotes_, note))
+            {
+                note.start += move;
+                note.duration += length;
+                note.pitch += transpose;
+            }
+        changed();
+        return true;
+    }
     return false;
 }
 juce::String StudioView::getTooltip()
@@ -939,7 +975,8 @@ juce::String StudioView::getTooltip()
     return "Space: play/stop. Arrangement: drag clips, right-click removes, Shift-click duplicates. "
            "M/S: mute/solo. Scroll track: gain, Shift-scroll: pan. Shift-drag ruler: loop. "
            "Ctrl-wheel: zoom. Shift-wheel: horizontal scroll. Piano roll: click adds, drag moves, "
-           "right edge changes length. Ctrl+Z: undo. F3: mixer.";
+           "right edge changes length. Arrows: move notes; Shift+arrows: length/octave. "
+           "Ctrl+Z: undo. F2: session name. F3: mixer.";
 }
 bool StudioView::exerciseEditing()
 {
@@ -961,6 +998,12 @@ bool StudioView::exerciseEditing()
     clipboard_[0].pitch = 83;
     duplicateNotes(true);
     ok = ok && project_.patterns[0].notes.back().pitch == 83 && validateProject(project_).empty();
+    const auto beforeNudge = project_.patterns[0].notes.back();
+    keyPressed(juce::KeyPress(juce::KeyPress::rightKey));
+    keyPressed(
+        juce::KeyPress(juce::KeyPress::upKey, juce::ModifierKeys(juce::ModifierKeys::shiftModifier), 0));
+    ok = ok && project_.patterns[0].notes.back().start == beforeNudge.start + snap_ &&
+         project_.patterns[0].notes.back().pitch == 95 && validateProject(project_).empty();
     clipboard_.clear();
     zoomPiano(1, static_cast<float>(pianoGrid().getX()));
     ok = ok && pianoZoom_ == 2 && pianoSpan() == selectedPattern()->length / 2;

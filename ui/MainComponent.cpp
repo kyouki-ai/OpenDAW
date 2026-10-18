@@ -6,6 +6,25 @@ namespace opendaw
 {
 namespace
 {
+juce::String sessionFileName(const Project &project)
+{
+    const auto name = juce::File::createLegalFileName(juce::String(project.name));
+    return name.isEmpty() ? "Untitled" : name;
+}
+void confirmDestination(juce::Component *owner, const juce::File &chosen, const juce::String &extension,
+                        std::function<void(juce::File)> complete)
+{
+    const auto target = chosen.hasFileExtension(extension) ? chosen : chosen.withFileExtension(extension);
+    // The native dialog checked the chosen name, which may differ after extension normalization.
+    if (target != chosen && target.existsAsFile())
+        juce::AlertWindow::showOkCancelBox(
+            juce::MessageBoxIconType::QuestionIcon, "Replace existing file?",
+            target.getFileName() + " already exists. Replace it?", "Replace", "Cancel", owner,
+            juce::ModalCallbackFunction::create([target, complete = std::move(complete)](int answer)
+                                                { complete(answer == 1 ? target : juce::File{}); }));
+    else
+        complete(target);
+}
 void text(juce::Graphics &g, const juce::String &value, juce::Rectangle<int> area, float size,
           juce::Colour colour, bool bold = false)
 {
@@ -49,8 +68,33 @@ MainComponent::MainComponent(bool smokeMode, bool persistentSession) : smokeMode
           static_cast<juce::Component *>(&loop),          static_cast<juce::Component *>(&metronome),
           static_cast<juce::Component *>(&audioSettings), static_cast<juce::Component *>(&newButton),
           static_cast<juce::Component *>(&openButton),    static_cast<juce::Component *>(&saveButton),
-          static_cast<juce::Component *>(&exportButton),  static_cast<juce::Component *>(&instrument)})
+          static_cast<juce::Component *>(&exportButton),  static_cast<juce::Component *>(&instrument),
+          static_cast<juce::Component *>(&projectName)})
         addAndMakeVisible(child);
+    projectName.setText(juce::String(project.name), juce::dontSendNotification);
+    projectName.setFont(juce::FontOptions(15, juce::Font::bold));
+    projectName.setBorderSize({0, 2, 0, 2});
+    projectName.setColour(juce::Label::textColourId, look.tokens.text);
+    projectName.setTitle("Session name");
+    projectName.setTooltip("Double-click or press F2 to rename your session");
+    projectName.setEditable(false, true, false);
+    projectName.onTextChange = [this]
+    {
+        const auto name = projectName.getText().trim();
+        if (name.isEmpty() || name.length() > 64)
+        {
+            error_ = "Choose a session name with 1 to 64 characters.";
+            projectName.setText(juce::String(project.name), juce::dontSendNotification);
+            repaint();
+            return;
+        }
+        if (name.toStdString() != project.name)
+        {
+            remember();
+            project.name = name.toStdString();
+            publishProject();
+        }
+    };
     play.setComponentID("transport-play");
     stop.setComponentID("transport-stop");
     play.setTitle("Play or stop");
@@ -110,6 +154,7 @@ MainComponent::MainComponent(bool smokeMode, bool persistentSession) : smokeMode
                       : themes.getSelectedId() == 3 ? ThemeTokens::ember()
                                                     : ThemeTokens::graphite());
         sendLookAndFeelChange();
+        projectName.setColour(juce::Label::textColourId, look.tokens.text);
         studio.repaint();
         repaint();
     };
@@ -264,6 +309,7 @@ void MainComponent::publishProject(bool markDirty)
     }
     pending_ = !engine.publish(pendingState);
     lastValidProject_ = project;
+    projectName.setText(juce::String(project.name), juce::dontSendNotification);
     dirty_ = dirty_ || markDirty;
     if (markDirty)
         ++revision_;
@@ -455,7 +501,7 @@ void MainComponent::save(bool chooseFile, std::function<void(bool)> complete)
     chooser_ = std::make_unique<juce::FileChooser>(
         "Save OpenDAW project",
         projectFile_ == juce::File{} ? juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                                           .getChildFile("Untitled.opendaw")
+                                           .getChildFile(sessionFileName(project) + ".opendaw")
                                      : projectFile_,
         "*.opendaw");
     chooserActive_ = true;
@@ -474,21 +520,31 @@ void MainComponent::save(bool chooseFile, std::function<void(bool)> complete)
                                       complete(false);
                                   return;
                               }
-                              if (!file.hasFileExtension("opendaw"))
-                                  file = file.withFileExtension("opendaw");
-                              const auto result = saveProject(safe->project, file);
-                              safe->error_ = result.getErrorMessage();
-                              if (result.wasOk())
-                              {
-                                  safe->projectFile_ = file;
-                                  safe->dirty_ = false;
-                                  if (safe->sessionStore_ && safe->recoveryReady_)
-                                      (void)safe->sessionStore_->clearRecovery();
-                                  safe->notice_ = "Saved " + file.getFileName();
-                              }
-                              safe->repaint();
-                              if (complete)
-                                  complete(result.wasOk());
+                              confirmDestination(safe.getComponent(), file, "opendaw",
+                                                 [safe, complete](juce::File file)
+                                                 {
+                                                     if (!safe)
+                                                         return;
+                                                     if (file == juce::File{})
+                                                     {
+                                                         if (complete)
+                                                             complete(false);
+                                                         return;
+                                                     }
+                                                     const auto result = saveProject(safe->project, file);
+                                                     safe->error_ = result.getErrorMessage();
+                                                     if (result.wasOk())
+                                                     {
+                                                         safe->projectFile_ = file;
+                                                         safe->dirty_ = false;
+                                                         if (safe->sessionStore_ && safe->recoveryReady_)
+                                                             (void)safe->sessionStore_->clearRecovery();
+                                                         safe->notice_ = "Saved " + file.getFileName();
+                                                     }
+                                                     safe->repaint();
+                                                     if (complete)
+                                                         complete(result.wasOk());
+                                                 });
                           });
 }
 void MainComponent::open()
@@ -546,60 +602,68 @@ void MainComponent::exportAudio()
 {
     if (chooserActive_ || exporting_.load())
         return;
-    chooser_ = std::make_unique<juce::FileChooser>(
-        "Export stereo WAV (24-bit / 48 kHz)",
-        juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("OpenDAW.wav"),
-        "*.wav");
+    chooser_ =
+        std::make_unique<juce::FileChooser>("Export stereo WAV (24-bit / 48 kHz)",
+                                            juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                                                .getChildFile(sessionFileName(project) + ".wav"),
+                                            "*.wav");
     chooserActive_ = true;
     const juce::Component::SafePointer<MainComponent> safe(this);
-    chooser_->launchAsync(
-        juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
-            juce::FileBrowserComponent::warnAboutOverwriting,
-        [safe](const juce::FileChooser &chooser)
-        {
-            if (!safe)
-                return;
-            safe->chooserActive_ = false;
-            auto file = chooser.getResult();
-            if (file == juce::File{})
-                return;
-            if (!file.hasFileExtension("wav"))
-                file = file.withFileExtension("wav");
-            safe->exportProgress_.cancel.store(false);
-            safe->exportProgress_.fraction.store(0);
-            safe->exporting_.store(true);
-            safe->exportButton.setEnabled(false);
+    chooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles |
+                              juce::FileBrowserComponent::warnAboutOverwriting,
+                          [safe](const juce::FileChooser &chooser)
+                          {
+                              if (!safe)
+                                  return;
+                              safe->chooserActive_ = false;
+                              auto file = chooser.getResult();
+                              if (file == juce::File{})
+                                  return;
+                              confirmDestination(
+                                  safe.getComponent(), file, "wav",
+                                  [safe](juce::File file)
+                                  {
+                                      if (!safe || file == juce::File{} || safe->exporting_.load())
+                                          return;
+                                      safe->exportProgress_.cancel.store(false);
+                                      safe->exportProgress_.fraction.store(0);
+                                      safe->exporting_.store(true);
+                                      safe->exportButton.setEnabled(false);
 #if JUCE_WINDOWS
-            const std::filesystem::path path(std::wstring(file.getFullPathName().toWideCharPointer()));
+                                      const std::filesystem::path path(
+                                          std::wstring(file.getFullPathName().toWideCharPointer()));
 #else
             const auto path = std::filesystem::u8path(file.getFullPathName().toStdString());
 #endif
-            safe->exportThread_ = std::jthread(
-                [safe, owner = safe.getComponent(), snapshot = safe->project, path, name = file.getFileName()]
-                {
-                    WavResult result;
-                    try
-                    {
-                        result = exportWav(snapshot, path, 48000, 24, &owner->exportProgress_);
-                    }
-                    catch (const std::exception &error)
-                    {
-                        result.error = error.what();
-                    }
-                    owner->exporting_.store(false);
-                    juce::MessageManager::callAsync(
-                        [safe, result, name]
-                        {
-                            if (!safe)
-                                return;
-                            safe->exportButton.setEnabled(true);
-                            safe->error_ = juce::String(result.error);
-                            if (result.error.empty())
-                                safe->notice_ = "Exported " + name;
-                            safe->repaint();
-                        });
-                });
-        });
+                                      safe->exportThread_ = std::jthread(
+                                          [safe, owner = safe.getComponent(), snapshot = safe->project, path,
+                                           name = file.getFileName()]
+                                          {
+                                              WavResult result;
+                                              try
+                                              {
+                                                  result = exportWav(snapshot, path, 48000, 24,
+                                                                     &owner->exportProgress_);
+                                              }
+                                              catch (const std::exception &error)
+                                              {
+                                                  result.error = error.what();
+                                              }
+                                              owner->exporting_.store(false);
+                                              juce::MessageManager::callAsync(
+                                                  [safe, result, name]
+                                                  {
+                                                      if (!safe)
+                                                          return;
+                                                      safe->exportButton.setEnabled(true);
+                                                      safe->error_ = juce::String(result.error);
+                                                      if (result.error.empty())
+                                                          safe->notice_ = "Exported " + name;
+                                                      safe->repaint();
+                                                  });
+                                          });
+                                  });
+                          });
 }
 void MainComponent::timerCallback()
 {
@@ -692,7 +756,6 @@ void MainComponent::paint(juce::Graphics &g)
     g.setColour(t.surface);
     g.fillRoundedRectangle(16, 104, 160, static_cast<float>(h - 152), 8);
     text(g, "YOUR SESSION", {30, 120, 132, 22}, 10, t.muted, true);
-    text(g, juce::String(project.name), {30, 151, 132, 26}, 15, t.text, true);
     text(g, "PLAYBACK", {30, 366, 132, 20}, 10, t.muted, true);
     text(g, "INSTRUMENT", {30, 432, 132, 20}, 10, t.muted, true);
     if (h >= 720)
@@ -736,6 +799,7 @@ void MainComponent::resized()
     studio.setBounds(190, 104, getWidth() - 298, getHeight() - 152);
     mixer.setBounds(studio.getBounds());
     newButton.setBounds(28, 192, 64, 32);
+    projectName.setBounds(28, 151, 136, 26);
     openButton.setBounds(100, 192, 64, 32);
     saveButton.setBounds(28, 234, 64, 32);
     exportButton.setBounds(100, 234, 64, 32);
@@ -752,6 +816,11 @@ void MainComponent::resized()
 }
 bool MainComponent::keyPressed(const juce::KeyPress &key)
 {
+    if (key == juce::KeyPress::F2Key)
+    {
+        projectName.showEditor();
+        return true;
+    }
     if (key == juce::KeyPress::F3Key)
     {
         showMixer(!mixer.isVisible());
@@ -804,6 +873,16 @@ bool MainComponent::keyPressed(const juce::KeyPress &key)
 }
 bool MainComponent::runSmokeChecks()
 {
+    const auto originalName = project.name;
+    projectName.setText("Midnight sketch", juce::sendNotificationSync);
+    if (project.name != "Midnight sketch")
+        return false;
+    undo();
+    if (project.name != originalName)
+        return false;
+    projectName.setText("", juce::sendNotificationSync);
+    if (project.name != originalName || projectName.getText() != juce::String(originalName))
+        return false;
     if (!exerciseProjectStore(juce::File::getCurrentWorkingDirectory().getChildFile("persistence-smoke")))
         return false;
     if (!exerciseSessionStore(juce::File::getCurrentWorkingDirectory().getChildFile("session-smoke")))

@@ -11,6 +11,8 @@ input gain, volume и mute/solo. При небольшом окне исполь
 Step sequencer: click toggles, wheel меняет velocity; длина 16/32 шага в заголовке.
 Piano roll: click добавляет, right-click удаляет, drag перемещает, край меняет длину;
 Shift выделяет несколько нот, Ctrl+A/C/V/D, Delete и velocity stems.
+Стрелки перемещают выделение; Shift+Left/Right меняет длину, Shift+Up/Down — октаву.
+F2 или двойной щелчок по имени сессии позволяет её переименовать с undo/redo.
 Grid в заголовке переключает 1/8, 1/16 и 1/32. Ctrl-wheel меняет масштаб,
 Shift-wheel прокручивает время; обычное колесо в piano roll — высоту нот.
 Arrangement: click линейки — seek; Shift-drag — loop; drag клипа — перенос/край — длина;

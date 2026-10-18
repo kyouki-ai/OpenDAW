@@ -71,6 +71,7 @@ class MainComponent final : public juce::Component, private juce::Timer
     juce::TextButton mixerButton{"Mixer / F3"};
     juce::Slider tempo, master;
     juce::ComboBox themes, instrument;
+    juce::Label projectName;
     juce::TooltipWindow tooltips{this, 600};
 };
 } // namespace opendaw

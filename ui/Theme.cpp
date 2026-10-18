@@ -42,6 +42,12 @@ void StudioLookAndFeel::setTheme(ThemeTokens next)
     setColour(juce::Slider::rotarySliderFillColourId, tokens.accent);
     setColour(juce::Slider::rotarySliderOutlineColourId, tokens.border);
     setColour(juce::ScrollBar::thumbColourId, tokens.muted.withAlpha(0.35f));
+    setColour(juce::TextEditor::backgroundColourId, tokens.raised);
+    setColour(juce::TextEditor::textColourId, tokens.text);
+    setColour(juce::TextEditor::outlineColourId, tokens.border);
+    setColour(juce::TextEditor::focusedOutlineColourId, tokens.accent);
+    setColour(juce::TextEditor::highlightColourId, tokens.accent.withAlpha(0.35f));
+    setColour(juce::TextEditor::highlightedTextColourId, tokens.text);
 }
 void StudioLookAndFeel::drawButtonBackground(juce::Graphics &g, juce::Button &b, const juce::Colour &,
                                              bool hover, bool down)
