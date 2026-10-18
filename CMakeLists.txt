@@ -9,7 +9,7 @@ include(CTest)
 option(OPENDAW_BUILD_APP "Build the JUCE desktop application" ON)
 set(OPENDAW_JUCE_PATH "" CACHE PATH "Existing JUCE 8.0.12 source tree")
 
-add_library(opendaw_core STATIC core/Project.cpp audio/Transport.cpp)
+add_library(opendaw_core STATIC core/Project.cpp audio/Transport.cpp audio/AudioEngine.cpp export/WavExport.cpp)
 target_include_directories(opendaw_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 if(MSVC)
     target_compile_options(opendaw_core PRIVATE /W4 /permissive- /utf-8)
@@ -21,6 +21,10 @@ if(BUILD_TESTING)
     add_executable(opendaw_core_tests tests/CoreTests.cpp)
     target_link_libraries(opendaw_core_tests PRIVATE opendaw_core)
     add_test(NAME core COMMAND opendaw_core_tests)
+    add_executable(opendaw_audio_tests tests/AudioTests.cpp)
+    target_link_libraries(opendaw_audio_tests PRIVATE opendaw_core)
+    add_test(NAME audio_render COMMAND opendaw_audio_tests)
+    set_tests_properties(audio_render PROPERTIES TIMEOUT 45)
 endif()
 
 if(OPENDAW_BUILD_APP)
@@ -56,14 +60,14 @@ if(OPENDAW_BUILD_APP)
         juce_add_gui_app(OpenDAW PRODUCT_NAME "OpenDAW" COMPANY_NAME "OpenDAW Project"
                          BUNDLE_ID "local.opendaw.desktop" VERSION "${PROJECT_VERSION}")
     endif()
-    target_sources(OpenDAW PRIVATE app/Main.cpp ui/MainComponent.cpp ui/Theme.cpp)
+    target_sources(OpenDAW PRIVATE app/Main.cpp ui/MainComponent.cpp ui/Theme.cpp ui/StudioView.cpp audio/DeviceHost.cpp persistence/ProjectStore.cpp)
     target_include_directories(OpenDAW PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_compile_definitions(OpenDAW PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
-                               JUCE_MODAL_LOOPS_PERMITTED=0)
+                               JUCE_MODAL_LOOPS_PERMITTED=0 JUCE_ASIO=0)
     if(MSVC)
         target_compile_options(OpenDAW PRIVATE /utf-8)
     endif()
-    target_link_libraries(OpenDAW PRIVATE opendaw_core juce::juce_gui_basics
+    target_link_libraries(OpenDAW PRIVATE opendaw_core juce::juce_gui_basics juce::juce_audio_devices
         juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
     if(BUILD_TESTING)
         add_test(NAME gui_smoke COMMAND OpenDAW --smoke-test

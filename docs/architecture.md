@@ -1,89 +1,67 @@
 # Архитектура OpenDAW
 
-Статус: срез 01 реализует core, preview Transport и оболочку. Остальное ниже — проектирование,
-не утверждение о готовом аудиодвижке. Стек: C++20/CMake/JUCE 8.0.12; GUI отдельно от DSP.
+C++20 / CMake / JUCE 8.0.12. Windows x64. GUI отделён от scheduler и DSP.
 
-## Модель и время
+## Модель
 
-`core/Project.h`: Project { UUID, schemaVersion=1, name, bpm, numerator, denominator, patterns, tracks }.
-Pattern { UUID, lengthTicks, notes }; Note { UUID, start, duration, MIDI pitch, velocity };
-Track { UUID, name, clips }; Clip { UUID, patternId, start, length }.
-Сейчас EntityId хранит строку; генерация и проверка UUID на границе приложения/загрузки — следующий срез.
-Сериализации и полной проверки ссылочной целостности пока нет.
+`core/Project` хранит UUID проекта, дорожек, паттернов, клипов и нот. Время —
+знаковые 64-битные ticks, 960 PPQ. `validateProject` проверяет диапазоны, конечность
+чисел, уникальность UUID и ссылки на паттерны до загрузки или компиляции.
+Дорожка содержит встроенный инструмент, gain/pan, mute/solo и клипы.
 
-960 PPQ, signed int64 Tick, quarter-note based, nonnegative project positions.
-`ticksToSamples(ticks, bpm, sampleRate)` округляет абсолютную позицию, отклоняет невалидный темп,
-sample rate, отрицательное время и переполнение. Не накапливать округление шаг за шагом.
-Размер такта влияет на grid: ticksPerBar = PPQ * numerator * 4 / denominator.
-Tempo map позднее; для первого playback tempo неизменен в пределах обработанного блока.
-
-## Конкретные интерфейсы
-
-Реализованный `Transport`: setTempo(double)->bool, play(), stop(), isPlaying(), tempo(), position().
-Это объект message thread; его нельзя передавать callback. При интеграции engine UI будет отправлять команды,
-а позиция станет публикуемым snapshot. Не использовать GUI Timer как аудиочасы.
-
-Предлагаемые контракты следующего среза (сейчас не реализованы):
-
-```cpp
-struct RenderContext { double sampleRate; int frames; int64_t absoluteSample; };
-struct NoteEvent { int frameOffset; uint8_t pitch; float velocity; bool noteOn; };
-class Instrument {
-public:
-    virtual ~Instrument() = default; // destruction outside callback
-    virtual void prepare(double sampleRate, int maxFrames) = 0;
-    virtual void reset() noexcept = 0;
-    virtual void process(const RenderContext&, std::span<const NoteEvent>,
-                         std::span<float> left, std::span<float> right) noexcept = 0;
-};
-class AudioEngine {
-public:
-    void prepare(double sampleRate, int maxFrames); // device stopped
-    bool submit(const TransportCommand&) noexcept; // bounded SPSC; UI producer
-    bool publishPrepared(StateSlotId) noexcept;    // worker-ready state
-    void process(float* const* output, int channels, int frames) noexcept;
-    EngineMeters readMeters() const noexcept;     // UI consumer
-    void stopAndRelease();                         // joins outside callback
-};
-```
-
-Все выходные каналы заполняются; необрабатываемые — нулями. Events отсортированы по sample,
-затем note-off перед note-on, затем стабильный ID. Блок — [start, end), событие на end относится
-к следующему блоку. При seek/stop/loop сбросить активные голоса по определённой политике.
+`compileProject` разворачивает повторения паттернов в ограниченный `RenderState`:
+8 каналов, 8192 note-on/off событий. При одинаковом времени note-off идёт первым.
+Время события округляется из абсолютных ticks в samples, без накопления ошибки.
 
 ## Потоки и владение
 
-Message thread владеет изменяемым Project, undo-командами и компонентами. Worker готовит immutable
-RenderState (scheduler, prepared instruments, routing, samples) и читает/пишет диск.
-Callback владеет текущим playhead, DSP state, заранее выделенными буферами и голосами.
+Message thread владеет Project, интерфейсом и историей 64 состояний undo/redo.
+Он компилирует изменения и передаёт индекс готового состояния через bounded SPSC.
+Три заранее выделенных слота принадлежат по очереди producer и callback.
+Callback возвращает старый индекс через retirement queue; producer повторно использует
+только возвращённый слот. При заполнении очереди UI сохраняет последнее изменение
+и повторяет публикацию. В callback нет shared_ptr, выделения памяти, mutex и файлов.
 
-До старта устройства создать пул минимум из трёх state slots. Worker заполняет только свободный slot,
-публикует индекс через bounded SPSC с release/acquire. Callback принимает индекс на границе блока,
-возвращает предыдущий индекс через retirement queue. Только worker освобождает память retired slot.
-Очереди ограничены, при заполнении worker откладывает публикацию, UI coalesces tempo/gain; stop получает
-отдельный atomic request. Callback никогда не ждёт свободного slot. Не использовать atomic shared_ptr:
-последний decrement может вызвать удаление в audio thread.
+Callback владеет sample clock, курсором событий и 64 голосами. Play/Stop/Seek —
+отдельные atomics. Смена темпа сохраняет музыкальную позицию. Изменение gain/pan
+не пересоздаёт последовательность нот; изменение нот отпускает текущие голоса.
+Stop сбрасывает позицию и даёт хвостам затухнуть, loop возвращает курсор на начало региона.
+Seek пока не восстанавливает уже начавшиеся длинные ноты.
 
-UI → audio: POD-команды через SPSC. Audio → UI: атомарные счётчики/уровни с фиксированным размером.
-Проверить lock-free свойства используемых atomics на x64. CPU load измерять вокруг process,
-не писать логи внутри него. Separate counters: callback deadline overruns и backend-reported xruns;
-не называть любой длинный callback аппаратным dropout.
+`DeviceHost` открывает только output через JUCE AudioDeviceManager. `prepare`
+вызывается при остановленном callback. UI читает атомарные meters; нагрузка callback
+и backend xruns учитываются отдельно. GUI Timer только обновляет изображение.
 
-Offline engine использует тот же scheduler и DSP с фиксированным seed и без GUI/device.
-Загрузка assets, конструирование графа и подготовка инструментов выполняются заранее.
+## Звук и экспорт
 
-## Формат проекта (предложение)
+Процедурные kick/snare/hat, sine/triangle synth, огибающие, constant-power pan,
+канальные gain/mute/solo, master smoothing и tanh soft limit. Семплы и сторонние
+инструменты не используются. Параметры огибающих пока фиксированы.
 
-Папка `.opendaw` с `project.json`, `assets/`, относительными нормализованными путями и UUID.
-Валидация версии, bounds, уникальности ID и ссылок перед заменой текущего проекта.
-Не загружать `../` или абсолютные asset paths. Missing assets — явный отчёт, не тихая подмена.
-Сохранение: sibling temporary file → flush → backup → atomic replacement на том же томе;
-Windows API и recovery будут выбраны с отдельными тестами ошибок. Нынешний код ничего не сохраняет.
+`exportWav` создаёт отдельный экземпляр того же движка: весь arrangement,
+без метронома и loop, с хвостом 750 мс. PCM stereo 16/24-bit, 44.1/48/96 kHz,
+до десяти минут. GUI экспортирует на одном worker, обновляет progress, отменяет
+при закрытии. Временный файл создаётся рядом с destination, затем атомарно заменяет его.
+Тест сравнивает PCM экспорта с движком, работающим другими размерами блока.
 
-## Модули
+## Файлы проекта
 
-app — lifecycle; core — model/validation/undo; audio — clock/device/engine;
-midi — event editing; sequencer — steps/clips/scheduler; instruments — synth/sampler;
-mixer — buses/meters; effects — DSP; ui — JUCE components/theme;
-persistence — schema/recovery; export — offline WAV; tests — deterministic verification.
-Не создавать пустые реализации будущих функций ради заполнения папок.
+`.opendaw` — JSON format/version=1 со всеми нотами, клипами и каналами. Размер
+ограничен 2 MiB, вложенность 32; массивы ограничены до разбора модели.
+Неизвестная версия и повреждённые данные не заменяют открытый проект.
+Сохранение: sibling temporary → flush → предыдущий файл в `.bak` → atomic replacement.
+На Windows используется MoveFileExW с REPLACE_EXISTING и WRITE_THROUGH.
+Проверены round-trip, backup, повреждённый JSON и отказ невалидной записи.
+Медиафайлы, миграции будущих версий и автоматическое recovery ещё не реализованы.
+
+## Проверки и границы
+
+CTest: core, audio_render, gui_smoke. В render-тесте проверяются musical clock,
+loop, voice continuity, mute/pan, нулевые operator-new вызовы внутри process,
+block-size independence, WAV заголовок/длина/PCM и сохранность destination при отмене.
+GUI smoke проверяет операции модели через handlers, persistence и размеры 960×640/1280×800;
+он не заменяет реальные drag/drop, прослушивание или аппаратные DPI проверки.
+`--device-smoke` отдельно открывает output и проверяет тишину без воспроизведения.
+
+Ограничения: фиксированные 8 каналов / 64 голоса / 4096 scheduled notes,
+нет VST3, записи, audio clips, sends, PDC и произвольного routing.

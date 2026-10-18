@@ -2,9 +2,12 @@
 
 ## 0.1.0-dev — 2026-10-18
 
-- Первый локальный срез C++20/CMake/JUCE 8.0.12.
-- Окно, транспорт без аудио, BPM, горячие клавиши, три темы.
-- Основные модели и тестируемая конверсия музыкального времени.
-- CTest smoke, Windows CI, архитектура, исследование REA, визуальные направления.
+- Native Windows приложение C++20/CMake/JUCE 8.0.12, Ember/Sand и ещё две темы.
+- Output audio settings, sample clock, метроном и loop.
+- Встроенные ударные и sine/triangle synth, 64 голоса, gain/pan/mute/solo и meters.
+- Step sequencer, piano roll и arrangement с редактированием нот и клипов.
+- Undo/redo, горячие клавиши, JSON-проекты, атомарное сохранение и резервная копия.
+- Offline WAV PCM 16/24-bit, отмена экспорта, проверка совпадения с движком.
+- CTest core/audio/GUI, тесты сохранения и Windows CI Debug/Release.
 
 Предварительная версия не опубликована.

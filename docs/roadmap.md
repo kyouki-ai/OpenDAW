@@ -1,26 +1,26 @@
-# План
+# План развития
 
-Последовательные этапы разработки до первого музыкального MVP.
+Последовательные этапы первого музыкального MVP. Состояние относится к прототипу;
+непроверенные аппаратные сценарии отдельно отмечены.
 
 | Этапы | Результат | Состояние |
 |---|---|---|
-| 01–04 | структура, CMake/JUCE, Debug/Release, unit/smoke/CI | локальные сборки и тесты проходят, CI подключён |
-| 05–07 | UUID validation, модель проекта, timing, ADR | базовые структуры и конверсия есть; полная валидация впереди |
-| 08–12 | устройство, silence callback, transport sample clock, metronome, loop | следующий вертикальный срез |
-| 13–20 | events, scheduler, sine, ADSR, gain, тест render | запланировано |
-| 21–28 | редактируемый step sequencer с реальным звуком | запланировано |
-| 29–38 | piano roll: ноты, выделение, snap, velocity | запланировано |
-| 39–46 | playlist: clips/tracks/seek/loop | запланировано |
-| 47–54 | mixer, gain/pan/meters/filter/routing | запланировано |
-| 55–60 | schema, атомарное сохранение, recovery | запланировано |
-| 61–65 | offline WAV, online equivalence, undo/redo | запланировано |
-| 66–70 | hotkeys, DPI/performance, Release и end-to-end | запланировано |
+| 01–07 | CMake/JUCE, UUID, model, timing, CI | реализовано; локальные unit/smoke проходят |
+| 08–12 | output device, silence callback, sample clock, loop/click | реализовано; устройство и тишина проверены, прослушивание впереди |
+| 13–20 | scheduler, synth, envelopes, gain | реализована основа; настройки приложения ещё не сохраняются |
+| 21–28 | step sequencer | редактирование, velocity, 16/32 steps и playback работают |
+| 29–38 | piano roll | add/delete/move/resize, Shift-selection, duplicate, velocity; zoom/scroll и paste требуют доработки |
+| 39–46 | arrangement | clips, move/resize/duplicate, seek, loop; zoom и перенос между дорожками впереди |
+| 47–54 | mixer | gain/pan/mute/solo, meters и master; отдельные strips и filter впереди |
+| 55–60 | persistence | JSON v1, validation, atomic save, backup; autosave/recovery впереди |
+| 61–65 | WAV, equivalence, undo/redo | реализовано; PCM/отмена/round-trip покрыты проверками |
+| 66–70 | hotkeys, DPI/performance, end-to-end | основные hotkeys есть; реальные мышь/HiDPI/нагрузка ещё не проверены |
 
-Визуальная работа: три концепта готовы; владелец выбрал C / Ember / Sand → shared controls → editor panels.
-Критерий следующего среза: выбранное output-устройство, гарантированная тишина callback,
-sample clock без UI Timer, lifecycle-тесты и честный отчёт о физическом звуке.
+Ближайшие задачи: paste без подмены clipboard, масштабирование редакторов, mixer strips,
+filter, настройки приложения и recovery. Затем полноценный сценарий создания композиции,
+визуальная полировка и Release-проверки.
 
-VST3, запись, PDC и сложная автоматизация — позже устойчивого MVP.
-После рабочей версии — авторский сайт приложения с анимациями и переходами;
-с демонстрацией реальных функций. Сейчас не опубликован.
+Оформление: Ember / Sand, собственная векторная отрисовка компонентов.
+VST3, запись, sends/PDC и сложная автоматизация — следующие версии.
+После устойчивой рабочей версии — сайт с анимациями и реальными демонстрациями.
 Лицензия для выпуска пока не выбрана.

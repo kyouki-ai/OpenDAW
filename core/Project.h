@@ -41,6 +41,18 @@ struct Track
     EntityId id;
     std::string name;
     std::vector<Clip> clips;
+    enum class Instrument
+    {
+        kick,
+        snare,
+        hat,
+        sine,
+        triangle
+    } instrument = Instrument::sine;
+    float gain = 0.75f;
+    float pan = 0.0f;
+    bool mute = false;
+    bool solo = false;
 };
 struct Project
 {
@@ -52,7 +64,16 @@ struct Project
     int schemaVersion = 1;
     std::vector<Pattern> patterns;
     std::vector<Track> tracks;
+    Tick loopStart = 0;
+    Tick loopEnd = ppq * 16;
+    bool loopEnabled = true;
+    bool metronome = false;
+    float masterGain = 0.8f;
 };
+[[nodiscard]] EntityId newId();
+[[nodiscard]] bool validId(const EntityId &) noexcept;
+[[nodiscard]] std::string validateProject(const Project &);
+[[nodiscard]] Project makeDemoProject();
 [[nodiscard]] bool validTempo(double bpm) noexcept;
 // Throws on invalid musical/sample-rate inputs or int64 sample overflow.
 [[nodiscard]] std::int64_t ticksToSamples(Tick ticks, double bpm, double sampleRate);

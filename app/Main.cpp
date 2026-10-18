@@ -13,8 +13,29 @@ class OpenDAWApplication final : public juce::JUCEApplication
     }
     void initialise(const juce::String &) override
     {
-        window = std::make_unique<Window>();
         const auto args = getCommandLineParameterArray();
+        window = std::make_unique<Window>(args.contains("--smoke-test"));
+        if (args.contains("--device-smoke"))
+        {
+            juce::Timer::callAfterDelay(
+                1800,
+                [this, args]
+                {
+                    auto *content = dynamic_cast<opendaw::MainComponent *>(window->getContentComponent());
+                    const bool passed = content && content->runDeviceChecks();
+                    const int report = args.indexOf("--report");
+                    if (report >= 0 && report + 1 < args.size())
+                    {
+                        juce::File file(args[report + 1]);
+                        file.getParentDirectory().createDirectory();
+                        file.replaceWithText(
+                            passed ? "PASS: real output device opened; callbacks received; output silent.\n"
+                                   : "FAIL: output device unavailable or callbacks not confirmed.\n");
+                    }
+                    setApplicationReturnValue(passed ? 0 : 2);
+                    quit();
+                });
+        }
         if (args.contains("--smoke-test"))
         {
             juce::Timer::callAfterDelay(
@@ -44,6 +65,9 @@ class OpenDAWApplication final : public juce::JUCEApplication
                             return written && stream->getStatus().wasOk();
                         };
                         passed = save(file);
+                        content->showPianoRoll(true);
+                        passed = save(file.getSiblingFile("opendaw-piano.png")) && passed;
+                        content->showPianoRoll(false);
                         content->setSize(960, 640);
                         passed = save(file.getSiblingFile("opendaw-compact.png")) && passed;
                     }
@@ -58,6 +82,12 @@ class OpenDAWApplication final : public juce::JUCEApplication
     }
     void systemRequestedQuit() override
     {
+        if (window)
+            if (auto *content = dynamic_cast<opendaw::MainComponent *>(window->getContentComponent()))
+            {
+                content->requestClose([this] { quit(); });
+                return;
+            }
         quit();
     }
 
@@ -65,10 +95,11 @@ class OpenDAWApplication final : public juce::JUCEApplication
     class Window final : public juce::DocumentWindow
     {
       public:
-        Window() : DocumentWindow("OpenDAW - Studio Preview", juce::Colour(0xff101419), allButtons)
+        explicit Window(bool smokeMode)
+            : DocumentWindow("OpenDAW", opendaw::ThemeTokens::ember().background, allButtons)
         {
             setUsingNativeTitleBar(true);
-            setContentOwned(new opendaw::MainComponent(), true);
+            setContentOwned(new opendaw::MainComponent(smokeMode), true);
             setResizable(true, true);
             setResizeLimits(960, 640, 3840, 2160);
             centreWithSize(1280, 800);

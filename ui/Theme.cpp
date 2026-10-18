@@ -36,6 +36,9 @@ void StudioLookAndFeel::setTheme(ThemeTokens next)
     setColour(juce::Slider::textBoxTextColourId, tokens.text);
     setColour(juce::Slider::textBoxBackgroundColourId, tokens.raised);
     setColour(juce::Slider::textBoxOutlineColourId, tokens.border);
+    setColour(juce::Slider::thumbColourId, tokens.text);
+    setColour(juce::Slider::trackColourId, tokens.accent);
+    setColour(juce::Slider::backgroundColourId, tokens.border);
 }
 void StudioLookAndFeel::drawButtonBackground(juce::Graphics &g, juce::Button &b, const juce::Colour &,
                                              bool hover, bool down)

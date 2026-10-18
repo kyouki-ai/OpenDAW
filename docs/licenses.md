@@ -18,8 +18,9 @@
 | Концепты | встроенный image_gen | сгенерированные предложения; не внедрять как bitmap интерфейс |
 | CMake / MSVC / Windows SDK | имеющиеся build tools | не поставляются в runtime; применяются их условия разработки |
 
-Используются juce_gui_basics и его core/events/data_structures/graphics dependencies.
-Audio devices, audio formats, plugin hosting, WebView, curl и ASIO сейчас не подключены.
+Используются juce_gui_basics, juce_audio_devices и их core/events/data_structures/graphics/audio_basics dependencies.
+WAV PCM записывается собственным кодом без внешних codecs.
+Audio formats, plugin hosting, WebView, curl и ASIO сейчас не подключены.
 Перед выпуском собрать точные notices из закреплённого архива и проверить все включённые codecs/platform paths.
 Не переносить общую лицензию репозитория на каждый вложенный компонент.
 

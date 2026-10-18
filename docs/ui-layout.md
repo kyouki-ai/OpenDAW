@@ -1,17 +1,22 @@
 # Компоновка
 
-Сейчас: нативная рамка Windows; content 1280×800, минимум 960×640.
-Header 88 logical px: бренд, Play/Stop, BPM, fixed position, размер и theme selector.
-Library слева 220 px, при ширине <1100 — 180. Справа Arrangement с линейкой и пустым состоянием.
-Нижняя строка явно сообщает Audio not connected. Единственные actionable controls действительно работают.
-Пустая сетка — графическая оболочка, не редактор; клики не создают клипы.
+Нативная рамка Windows, content 1280×800, минимум 960×640. Header 88 logical px:
+бренд, Play/Stop, BPM, позиция из sample clock, размер и selector темы.
+Слева панель с файлами, undo/redo, loop/click, инструментом и Audio settings.
+По центру arrangement с клипами, mute/solo и канальными уровнями.
+Снизу вкладки step sequencer и piano roll; справа master fader и meters.
 
-Принята будущая композиция концепта C: library слева, playlist сверху в центре,
-piano roll / channel rack в нижней вкладке, mixer справа или отдельной dock panel.
-Не показывать фиктивные метры/ноты как реальную обработку звука. Концепты содержат demo arrangement
-для оценки будущего дизайна и отдельно помечаются.
+Step sequencer: click toggles, wheel меняет velocity; длина 16/32 шага в заголовке.
+Piano roll: click добавляет, right-click удаляет, drag перемещает, край меняет длину;
+Shift выделяет несколько нот, Ctrl+A/C/V/D, Delete и velocity stems.
+Arrangement: click линейки — seek; Shift-drag — loop; drag клипа — перенос/край — длина;
+Shift-click — копия, right-click — удалить. Колесо над дорожкой — gain, Shift-wheel — pan.
 
-GUI smoke проверяет границы дочерних components при 960×640 и 1280×800.
-Снимки реального рендера 1280×800 и 960×640 просмотрены: видимых наложений и обрезаний нет.
-Три theme callbacks проверены smoke-тестом; ручной focus order ещё не проверен.
-Физический DPI/перемещение между мониторами и ручные mouse interactions требуют отдельной проверки.
+Все ноты, клипы и meters отражают текущую модель или реальную обработку.
+Подсказки показывают доступные действия. Цвета определены общими ThemeTokens.
+Строка состояния сообщает устройство, формат, экспорт или ошибку.
+GUI smoke проверяет handlers и границы components при 960×640 и 1280×800;
+сохраняет реальные рендеры работающего приложения. Это не аппаратные DPI screenshots.
+
+Дальнейшая работа: mixer strips, zoom/scroll, snap controls, визуальная полировка,
+клавиатурная навигация и тестирование на физических DPI/мониторах.
