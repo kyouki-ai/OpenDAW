@@ -51,6 +51,8 @@ class StudioView final : public juce::Component, public juce::TooltipClient
     void beginEdit();
     void toggleStep(int channel, int step);
     void duplicateNotes(bool fromClipboard = false);
+    void quantizeSelection();
+    juce::Rectangle<int> quantizeButton() const;
     Pattern *patternForTrack(int track);
     void focusPattern();
     Tick pianoSpan() const;

@@ -894,6 +894,27 @@ bool MainComponent::runSmokeChecks()
     projectName.setText("", juce::sendNotificationSync);
     if (project.name != originalName || projectName.getText() != juce::String(originalName))
         return false;
+    studio.showPianoRoll(true);
+    auto *phrase = studio.selectedPattern();
+    if (!phrase || phrase->notes.empty())
+        return false;
+    phrase->notes[0].start = 37;
+    publishProject(false);
+    studio.keyPressed(juce::KeyPress('A', juce::ModifierKeys(juce::ModifierKeys::ctrlModifier), 0));
+    studio.keyPressed(juce::KeyPress('Q'));
+    if (studio.selectedPattern()->notes[0].start != 0)
+        return false;
+    const auto quantizeHistory = undoHistory.size();
+    studio.keyPressed(juce::KeyPress('Q'));
+    if (undoHistory.size() != quantizeHistory)
+        return false;
+    undo();
+    if (project.patterns.back().notes[0].start != 37)
+        return false;
+    redo();
+    if (project.patterns.back().notes[0].start != 0)
+        return false;
+    studio.resetSelection();
     if (!exerciseProjectStore(juce::File::getCurrentWorkingDirectory().getChildFile("persistence-smoke")))
         return false;
     if (!exerciseSessionStore(juce::File::getCurrentWorkingDirectory().getChildFile("session-smoke")))

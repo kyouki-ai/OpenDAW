@@ -124,4 +124,27 @@ EditResult renameTrack(Project &project, const EntityId &id, const std::string &
     track->name = name;
     return commit(project, std::move(candidate), id);
 }
+bool quantizeNoteStarts(Pattern &pattern, const std::vector<std::string> &selectedIds, Tick grid)
+{
+    if (pattern.length <= 0 || pattern.length > ppq * 16 || grid <= 0 || grid > pattern.length ||
+        selectedIds.empty())
+        return false;
+    // Preflight every note so malformed input cannot leave a partly quantized pattern.
+    for (const auto &note : pattern.notes)
+        if (note.duration <= 0 || note.duration > pattern.length || note.start < 0 ||
+            note.start > pattern.length - note.duration)
+            return false;
+    bool changed = false;
+    for (auto &note : pattern.notes)
+    {
+        if (std::find(selectedIds.begin(), selectedIds.end(), note.id.value) == selectedIds.end())
+            continue;
+        const Tick nearest = note.start / grid + (note.start % grid >= (grid + 1) / 2 ? 1 : 0);
+        const Tick last = (pattern.length - note.duration) / grid;
+        const Tick start = std::min(nearest, last) * grid;
+        changed = changed || start != note.start;
+        note.start = start;
+    }
+    return changed;
+}
 } // namespace opendaw

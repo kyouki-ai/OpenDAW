@@ -109,5 +109,43 @@ int main()
     session.denominator = 0;
     check(!addInstrumentTrack(session, Track::Instrument::sine).error.empty(),
           "invalid clock rejected before calculating a new track length");
+    Pattern phrase{newId(), "Loose timing", ppq * 4};
+    for (const auto start : {119, 120, 121, 3830, 137})
+        phrase.notes.push_back({newId(), start, start == 3830 ? 10 : 240, 64, 0.6f});
+    phrase.notes.push_back({newId(), 0, phrase.length, 60, 0.4f});
+    const auto loose = phrase;
+    std::vector<std::string> selection;
+    for (std::size_t i : {0u, 1u, 2u, 3u, 5u})
+        selection.push_back(phrase.notes[i].id.value);
+    check(quantizeNoteStarts(phrase, selection, ppq / 4) && phrase.notes[0].start == 0 &&
+              phrase.notes[1].start == 240 && phrase.notes[2].start == 240 && phrase.notes[3].start == 3600 &&
+              phrase.notes[4].start == 137 && phrase.notes[5].start == 0,
+          "quantize rounds nearest, ties forward, preserves unselected notes and fits pattern end");
+    bool expressiveDataIntact = phrase.id == loose.id && phrase.length == loose.length;
+    for (std::size_t i = 0; i < phrase.notes.size(); ++i)
+        expressiveDataIntact = expressiveDataIntact && phrase.notes[i].id == loose.notes[i].id &&
+                               phrase.notes[i].duration == loose.notes[i].duration &&
+                               phrase.notes[i].pitch == loose.notes[i].pitch &&
+                               phrase.notes[i].velocity == loose.notes[i].velocity;
+    check(expressiveDataIntact && !quantizeNoteStarts(phrase, selection, ppq / 4),
+          "quantize preserves identity and expression, and repeating it is a no-op");
+    for (const Tick grid : {ppq / 8, ppq / 4, ppq / 2})
+    {
+        auto gridPhrase = loose;
+        gridPhrase.notes[0].start = 301;
+        check(quantizeNoteStarts(gridPhrase, {gridPhrase.notes[0].id.value}, grid) &&
+                  gridPhrase.notes[0].start == (grid == 120   ? 360
+                                                : grid == 240 ? 240
+                                                              : 480),
+              "quantize respects 1/32, 1/16 and 1/8 grid");
+    }
+    auto rejected = loose;
+    check(!quantizeNoteStarts(rejected, selection, 0) && !quantizeNoteStarts(rejected, selection, -1) &&
+              !quantizeNoteStarts(rejected, selection, INT64_MAX) && !quantizeNoteStarts(rejected, {}, 240) &&
+              !quantizeNoteStarts(rejected, {"unknown-note"}, 240) && rejected.notes[0].start == 119,
+          "invalid grid, empty and stale selections leave timing intact");
+    rejected.notes.back().duration = INT64_MAX;
+    check(!quantizeNoteStarts(rejected, selection, 240) && rejected.notes[0].start == 119,
+          "invalid later note rejects quantize before changing an earlier note");
     return failures == 0 ? 0 : 1;
 }

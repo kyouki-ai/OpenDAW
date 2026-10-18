@@ -362,10 +362,16 @@ void StudioView::paint(juce::Graphics &g)
     auto *pattern = selectedPattern();
     if (!pattern)
         return;
-    if (getWidth() > 820)
-        label(g, juce::String(pattern->name), {300, e.getY() + 8, getWidth() - 580, 24}, 12, t.muted);
+    const int patternNameX = piano_ ? 392 : 300;
+    if (getWidth() > patternNameX + 520)
+        label(g, juce::String(pattern->name),
+              {patternNameX, e.getY() + 8, getWidth() - patternNameX - 280, 24}, 12, t.muted);
     if (piano_)
     {
+        const auto button = quantizeButton();
+        g.setColour(t.raised);
+        g.fillRoundedRectangle(button.toFloat(), 4);
+        label(g, "Quantize / Q", button, 11, selectedNotes_.empty() ? t.muted : t.accent);
         label(g, "Grid 1/" + juce::String(ppq * 4 / snap_), {getWidth() - 270, e.getY() + 8, 80, 24}, 11,
               t.muted);
         label(g, "Zoom " + juce::String(pianoZoom_) + "x", {getWidth() - 180, e.getY() + 8, 75, 24}, 11,
@@ -478,8 +484,7 @@ void StudioView::paint(juce::Graphics &g)
         g.drawLine(x, static_cast<float>(velocityY + velocityH), x,
                    static_cast<float>(velocityY) + (1 - note.velocity) * velocityH, 2);
     }
-    label(g,
-          "Click: add / right-click: delete / drag: move / edge: length / Shift: select / Ctrl+D: duplicate",
+    label(g, "Click: add / right-click: delete / drag: move / edge: length / Shift: select / Q: quantize",
           {12, e.getBottom() - 18, getWidth() - 24, 16}, 10, t.muted);
 }
 void StudioView::toggleStep(int channel, int step)
@@ -524,6 +529,11 @@ void StudioView::mouseDown(const juce::MouseEvent &event)
             piano_ = event.x >= 145;
             selectedNotes_.clear();
             repaint();
+            return;
+        }
+        if (piano_ && quantizeButton().contains(event.getPosition()))
+        {
+            quantizeSelection();
             return;
         }
         if (event.x > getWidth() - 110 && pattern)
@@ -949,12 +959,34 @@ void StudioView::duplicateNotes(bool fromClipboard)
     }
     changed();
 }
+juce::Rectangle<int> StudioView::quantizeButton() const
+{
+    return {286, editor().getY() + 8, 90, 24};
+}
+void StudioView::quantizeSelection()
+{
+    auto *pattern = selectedPattern();
+    if (!pattern)
+        return;
+    auto candidate = *pattern;
+    if (!quantizeNoteStarts(candidate, selectedNotes_, snap_))
+        return;
+    editStarted_ = false;
+    beginEdit();
+    *pattern = std::move(candidate);
+    changed();
+}
 bool StudioView::keyPressed(const juce::KeyPress &key)
 {
     auto *pattern = selectedPattern();
     if (!pattern)
         return false;
     editStarted_ = false;
+    if (piano_ && key.getKeyCode() == 'Q' && !key.getModifiers().isAnyModifierKeyDown())
+    {
+        quantizeSelection();
+        return true;
+    }
     if (key.getModifiers().isCommandDown())
     {
         if (key.getKeyCode() == 'T')
@@ -1133,7 +1165,8 @@ juce::String StudioView::getTooltip()
            "Arrangement: drag clips, right-click removes, Shift-click duplicates. "
            "M/S: mute/solo. Scroll track: gain, Shift-scroll: pan. Shift-drag ruler: loop. "
            "Ctrl-wheel: zoom. Shift-wheel: horizontal scroll. Piano roll: click adds, drag moves, "
-           "right edge changes length. Arrows: move notes; Shift+arrows: length/octave. "
+           "right edge changes length. Q: quantize selected notes to Grid. "
+           "Arrows: move notes; Shift+arrows: length/octave. "
            "Ctrl+Z: undo. F2: session name. F3: mixer.";
 }
 bool StudioView::exerciseEditing()
@@ -1191,6 +1224,7 @@ bool StudioView::exerciseEditing()
     ok = ok && project_.tracks.size() == 8 && validateProject(project_).empty();
     const auto bounds = getBounds();
     setSize(662, 488);
+    ok = ok && quantizeButton().getRight() < getWidth() - 270 && editor().contains(quantizeButton());
     stepScroll_ = maxStepScroll();
     ok = ok && maxStepScroll() > 0 && stepViewport().contains(stepCell(7, 0));
     project_.tracks.back().clips.clear();
