@@ -52,5 +52,7 @@ GUI smoke-тест открывает окно примерно на секун�
 Исходный план сохранён в [docs/master-plan.md](docs/master-plan.md). Лицензия собственного кода пока не выбрана.
 Никакие бинарники и исходники сторонних DAW не копируются.
 Создан публичный репозиторий: [kyouki-ai/OpenDAW](https://github.com/kyouki-ai/OpenDAW).
-Первичная отправка кода пока отклонена GitHub: для `.github/workflows/windows.yml`
-нужно отдельно согласованное разрешение GitHub CLI `workflow`. Первый коммит сохранён локально.
+Исходники опубликованы в основной ветке `main`.
+[История коммитов для преподавателя](https://github.com/kyouki-ai/OpenDAW/commits/main/)
+и [автоматические проверки Windows](https://github.com/kyouki-ai/OpenDAW/actions/workflows/windows.yml)
+доступны публично.
