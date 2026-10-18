@@ -11,3 +11,10 @@
 .env.*
 !.env.example
 /artifacts/
+/AGENTS.md
+/docs/master-plan.md
+/docs/daily-log.md
+/docs/github-workflow.md
+/docs/website-brief.md
+/docs/visual-asset-requests.md
+/docs/concepts/prompts.txt
